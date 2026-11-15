@@ -27,6 +27,7 @@ type Props = Readonly<{
 const EVENT_LABELS:Readonly<Record<string,string>>={
   PERSON_BIRTH:'出生',MARRIAGE_REGISTER:'婚姻',LEGAL_TITLE_TRANSFER:'称号移転',
   LEGAL_DYNASTY_SET:'法的王朝帰属',PERSON_DEATH:'死亡',
+  COUNTRY_RULER_SET:'国家統治者の更新',COUNTRY_RULER_VACATE:'国家統治者の未確定化',
 }
 const labelOf=(type:string)=>EVENT_LABELS[type]??type
 const SHOW=35
@@ -91,6 +92,13 @@ export function ObservationPanel(p:Props){
     .filter((id,i,all)=>all.indexOf(id)===i)
   const evidencePersons=chosenEvent?sourcePersonIds(chosenEvent)
     .filter(id=>persons.some(x=>x.personId===id)):[]
+  // 出生Eventの子は年Y初に存在しない。既存の状態差分に裏付けられたNEWBORNだけを翌年初へ導く。
+  const newbornNextYear=v&&v.year<1350?v.year+1:null
+  const newbornIds=chosenEvent&&newbornNextYear!==null
+    ?[...new Set((associations?.confirmed??[])
+      .filter(a=>a.source.type==='EVENT'&&a.source.eventId===chosenEvent.eventId&&
+        a.role==='NEWBORN'&&a.target.kind==='PERSON'&&!persons.some(p=>p.personId===a.target.id))
+      .map(a=>a.target.id))]:[]
   const chooseEvent=(e:EventLogEntry)=>{
     setEventId(e.eventId);setTraceId('')
     const first=sourcePersonIds(e).find(id=>persons.some(x=>x.personId===id))
@@ -237,6 +245,13 @@ export function ObservationPanel(p:Props){
             {evidencePersons.length>0&&<div className="obs-related-links" data-testid="obs-event-people">
               {evidencePersons.map(id=><button type="button" key={id} onClick={()=>setSelectedPerson(id)}>
                 {shortPersonName(persons.find(x=>x.personId===id)!.name)}の家系を見る
+              </button>)}
+            </div>}
+            {newbornIds.length>0&&newbornNextYear!==null&&<div className="obs-related-links" data-testid="obs-event-newborns">
+              <p className="note">出生した人物はこの年の年初にはまだいません。実際の翌年初の人物記録を確認します。</p>
+              {newbornIds.map(id=><button type="button" key={id} data-testid={'obs-newborn-next-year-'+id}
+                disabled={p.loading||!seedMatches} onClick={()=>{setSelectedPerson(id);yearChange(newbornNextYear)}}>
+                {newbornNextYear}年初の出生人物の記録を見る
               </button>)}
             </div>}
             {chosenEvent.sourceTraceIds.length===0
