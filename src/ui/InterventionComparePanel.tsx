@@ -169,7 +169,7 @@ export function InterventionComparePanel(p:Props){
         <dt>うち法的ナルヴェン所属が確定</dt><dd>{obs.legalTargetDescendants}人</dd>
         <dt>新生児の法的王朝が未確定</dt><dd>{obs.birthsWithUndeterminedDynasty}人</dd>
         <dt>1350年に存命する合法なナルヴェン</dt><dd>{obs.livingLegalTargetMembers}人</dd>
-        <dt>土地Title移転 / 新しい統治委任</dt><dd>{obs.titleTransferEvents}件 / {obs.controlMandateEvents}件</dd>
+        <dt>称号移転（王位・領地） / 新しい統治委任</dt><dd>{obs.titleTransferEvents}件 / {obs.controlMandateEvents}件</dd>
         <dt>1350年に継続中の相続審査</dt><dd>{obs.successionCasesPending}件</dd>
       </dl>
     )}
