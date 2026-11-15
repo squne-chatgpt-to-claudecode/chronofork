@@ -14,7 +14,8 @@ export const EVENT_CATEGORIES:readonly EventCategory[]=Object.freeze([
   {key:'dissolve',label:'婚姻の終了（配偶者の死亡）',types:['MARRIAGE_DISSOLVE']},
   {key:'dynasty',label:'法的王朝の確定',types:['LEGAL_DYNASTY_SET']},
   {key:'case',label:'相続審査の記録',types:['LEGAL_CASE_SET']},
-  {key:'title',label:'土地Titleの移転',types:['LEGAL_TITLE_TRANSFER']},
+  {key:'title',label:'称号の移転（王位・領地）',types:['LEGAL_TITLE_TRANSFER']},
+  {key:'ruler',label:'国家統治者の更新・未確定化',types:['COUNTRY_RULER_SET','COUNTRY_RULER_VACATE']},
   {key:'mandate',label:'統治委任の設定',types:['CONTROL_MANDATE_SET']},
 ])
 const typesOf=(e:EventLogEntry)=>e.eventType.split('+')
@@ -70,6 +71,7 @@ export function namesOf(w:WorldState|undefined):EventNames{
     person:id=>{const p=w?.persons.find(x=>x.personId===id);return p?shortPersonName(p.name):undefined},
     group:id=>w?.groups.find(g=>g.groupId===id)?.name,
     dynasty:id=>w?.legal.dynasties.find(d=>d.dynastyId===id)?.name,
+    country:id=>w?.countries.find(c=>c.countryId===id)?.name,
   }
 }
 export function eventHeadline(e:EventLogEntry,names:EventNames,typeLabel:string):string{

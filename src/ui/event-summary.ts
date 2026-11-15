@@ -6,6 +6,8 @@ export type EventNames = Readonly<{
   person: (id: Id) => string | undefined
   group: (id: Id) => string | undefined
   dynasty: (id: Id) => string | undefined
+  /** 既存呼出しに互換。未記録の国名は生成しない。 */
+  country?: (id: Id) => string | undefined
 }>
 export type EventSummary = Readonly<{ headline: string; lines: readonly string[] }>
 
@@ -57,6 +59,27 @@ export function describeEvent(e: EventLogEntry, names: EventNames): EventSummary
       if (!id || id.kind !== 'PERSON' || !d || !str(d.after) || !s || s.after !== 'DETERMINED') return undefined
       const lines = [s.before === 'UNDETERMINED' ? '変更前: 法的王朝は未確定' : `変更前の状態: ${String(s.before)}`]
       return { headline: `${person(id.id)}の法的王朝が「${dynasty(str(d.after)!)}」に確定（${e.year}年）`, lines }
+    }
+    case 'COUNTRY_RULER_SET':
+    case 'COUNTRY_RULER_VACATE': {
+      // 確定した更新と死亡後の参照解除を区別し、EventのstateChangeだけから表示する。
+      const ref = e.involvedRefs.find(r => r.kind === 'COUNTRY')
+      if (!ref || ref.kind !== 'COUNTRY') return undefined
+      const change = e.stateChanges.find(c => c.path === '$.countries[' + ref.id + '].rulerPersonId')
+      if (!change) return undefined
+      const before = str(change.before), after = str(change.after)
+      if (!after && change.after !== null) return undefined
+      if (e.eventType === 'COUNTRY_RULER_VACATE' && after) return undefined
+      const country = names.country?.(ref.id) ?? ref.id
+      return {
+        headline: after
+          ? country + 'の統治者記録が' + person(after) + 'に更新（' + e.year + '年）'
+          : country + 'の統治者記録が未確定になった（' + e.year + '年）',
+        lines: [
+          '変更前の統治者: ' + (before ? person(before) : '記録なし'),
+          '変更後: ' + (after ? person(after) : '未確定（後継者を推定しません）'),
+        ],
+      }
     }
     default:
       return undefined
