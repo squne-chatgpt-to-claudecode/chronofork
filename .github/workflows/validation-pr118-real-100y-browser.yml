@@ -1,0 +1,29 @@
+name: validation-pr118-real-100y-browser
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/validation-pr118-real-100y-browser.yml
+
+permissions:
+  contents: read
+
+jobs:
+  observed-history-and-a2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=6144
+      CHRONOFORK_E2E_INTEGRATED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Verify actual A0 observation and A1-A2 interaction
+        run: npx playwright test tests/e2e/integrated-mode.spec.ts --grep "観測中心UX114|同年・別ペアに追加介入" --workers=1 --retries=0 --reporter=list
