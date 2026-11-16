@@ -169,7 +169,7 @@ test.describe('統合モード: A0キャッシュの実Worker再利用(オプト
     await page.getByTestId('branch-run').click()
     await expect(page.getByTestId('branch-results')).toBeVisible({ timeout: 12 * 60_000 })
     await expect(page.getByTestId('integrated-a0-source')).toContainText('今回計算')
-    const firstMs = Number(/([\d.]+)/.exec(await page.getByTestId('integrated-wall-time').innerText())?.[1])
+    const firstMs = Number(/([\d.]+)/.exec(await page.getByTestId('integrated-wall-time').textContent())?.[1])
 
     await page.getByTestId('branch-fork-year').fill('1345')
     await page.getByTestId('branch-run').click()
@@ -178,7 +178,7 @@ test.describe('統合モード: A0キャッシュの実Worker再利用(オプト
     await expect(page.getByTestId('progress-A0')).not.toContainText('年初まで計算済み')
     await expect(page.getByTestId('integrated-a0-source')).toContainText('再利用', { timeout: 12 * 60_000 })
     await expect(page.getByTestId('branch-error')).toHaveCount(0)
-    const secondMs = Number(/([\d.]+)/.exec(await page.getByTestId('integrated-wall-time').innerText())?.[1])
+    const secondMs = Number(/([\d.]+)/.exec(await page.getByTestId('integrated-wall-time').textContent())?.[1])
     console.info('CHRONOFORK_E2E_A0CACHE=' + JSON.stringify({ firstSec: firstMs, secondSec: secondMs }))
     expect(secondMs).toBeLessThan(firstMs)
   })

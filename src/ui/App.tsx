@@ -306,9 +306,15 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
     setEventId(undefined)
     setTraceId(undefined)
     setSelection(undefined)
-    // 計算完了後は実際の差分要約へ移動し、技術ログの海で迷わせない。
-    setTimeout(()=>document.getElementById('effect-summary')?.scrollIntoView?.({block:'start'}),0)
   }
+  // 計算完了後は実際の差分要約へ移動し、技術ログの海で迷わせない。
+  // 結果DOMがcommitされた後に移動する必要があるため、applyViewのタイマーではなくA1結果の更新へ連動させる。
+  const resultReveal=comparison?.a1
+  useEffect(()=>{
+    if(!resultReveal)return
+    const id=requestAnimationFrame(()=>document.getElementById('effect-summary')?.scrollIntoView?.({block:'start'}))
+    return()=>cancelAnimationFrame(id)
+  },[resultReveal])
   const runComparison = (input:PlayInput) => {
     setNotice(undefined)
     if (candHandleRef.current || obsRef.current) {setPlayError({code:'RUN_IN_PROGRESS',message:'原史の観測・候補取得が終了してから介入してください'});return}

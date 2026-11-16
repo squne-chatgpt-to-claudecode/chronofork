@@ -324,6 +324,8 @@ export function InterventionComparePanel(p:Props){
     {p.comparison&&input&&before&&after&&<div data-testid="branch-results" className="compare-results">
       <section className="effect-summary" id="effect-summary" data-testid="effect-summary" aria-labelledby="effect-summary-heading">
         <h3 id="effect-summary-heading">この介入で、実際に何が変わった？</h3>
+        <p data-testid="effect-goal-line">1350年の試験判定（技術検証・正式勝敗ではない）: A0 {trialGoalStatus(p.comparison.a0.result.technicalGoal)} ／ A1 {trialGoalStatus(p.comparison.a1.result.technicalGoal)}{' '}
+          <button type="button" onClick={()=>document.getElementById('trial-goal-summary')?.scrollIntoView({block:'start'})}>判定の詳細へ移動</button></p>
         <p>選んだ2人：<strong>{personName(pair[0])} と {personName(pair[1])}</strong></p>
         <p data-testid="effect-input">介入条件：{input.year}年から{input.durationYears}年間、2人の信頼を
           <strong>{input.signedDelta>0?'+':''}{input.signedDelta}</strong>補正。これは入力値であり、歴史の結果とは別です。</p>
