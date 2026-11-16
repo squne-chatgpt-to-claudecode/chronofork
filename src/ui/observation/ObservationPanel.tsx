@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { titleLabel } from './title-history.ts'
 import type { TitleHoldingHistory } from './title-history.ts'
 import { A0FutureContext } from './A0FutureContext.tsx'
@@ -94,7 +94,14 @@ export function ObservationPanel(p:Props){
   const traces=(v?.traces??[]).filter(t=>(traceFilter==='ALL'||
     traceFilter==='EVENTLESS'&&t.eventIds.length===0&&(t.status==='DEFER'||t.status==='REJECT')||
     traceFilter===t.status)&&(!relatedOnly||traceRefs.has(t.traceId)))
-  const chosenEvent=v?.events.find(x=>x.eventId===eventId)
+  const jumpEvent=v&&pendingTitleJump?.year===v.year
+    ?v.events.find(e=>e.eventType.split('+').includes('LEGAL_TITLE_TRANSFER')&&
+      e.stateChanges.some(c=>{
+        const path='$.titles['+pendingTitleJump.titleId+'].holder'
+        return c.path===path||c.path.startsWith(path+'.')
+      }))
+    :undefined
+  const chosenEvent=v?.events.find(x=>x.eventId===(jumpEvent?.eventId??eventId))
   const chosenTrace=v?.traces.find(x=>x.traceId===traceId)
   const sourcePersonIds=(e:EventLogEntry)=>(associations?.confirmed??[])
     .filter(a=>a.source.type==='EVENT'&&a.source.eventId===e.eventId&&a.target.kind==='PERSON')
@@ -110,6 +117,7 @@ export function ObservationPanel(p:Props){
         a.role==='NEWBORN'&&a.target.kind==='PERSON'&&!persons.some(p=>p.personId===a.target.id))
       .map(a=>a.target.id))]:[]
   const chooseEvent=(e:EventLogEntry)=>{
+    setPendingTitleJump(null)
     setEventId(e.eventId);setTraceId('')
     const first=sourcePersonIds(e).find(id=>persons.some(x=>x.personId===id))
     if(first)setSelectedPerson(first)
@@ -132,12 +140,13 @@ export function ObservationPanel(p:Props){
     e.stateChanges.some(c=>c.path===titlePrefix||c.path.startsWith(titlePrefix+'.'))):[]
   const titleTraces=title?(v?.traces??[]).filter(t=>
     titleEvents.some(e=>e.sourceTraceIds.includes(t.traceId)&&t.eventIds.includes(e.eventId))):[]
-  const openTitleEvent=(id:string)=>{setEventId(id);setTraceId('');setEventType('ALL');setRelatedOnly(false)}
+  const openTitleEvent=(id:string)=>{setPendingTitleJump(null);setEventId(id);setTraceId('');setEventType('ALL');setRelatedOnly(false)}
   const openTitleTrace=(id:string)=>{setTraceId(id);setEventId('');setTraceFilter('ALL');setRelatedOnly(false);setShowReasons(true)}
   const goal=v?.technicalGoal
   const assessments=(goal?.status==='NOT_ACHIEVED'||goal?.status==='ACHIEVED')?goal.assessments:[]
   const territorialAssessments=assessments.filter(a=>v?.world.titles.find(t=>t.titleId===a.titleId)?.kind==='TERRITORIAL')
   const yearChange=(y:number)=>{
+    setPendingTitleJump(null)
     setScrubYear(null)
     setEventId('');setTraceId('');setEventType('ALL');setRelatedOnly(false)
     setEventLimit(SHOW);setTraceLimit(SHOW)
@@ -145,24 +154,9 @@ export function ObservationPanel(p:Props){
   }
   const goToTitleEvidence=(titleId:Id,year:number)=>{
     setSelectedTitle(titleId)
-    setPendingTitleJump({titleId,year})
     yearChange(year)
+    setPendingTitleJump({titleId,year})
   }
-  // 確定済みの称号変更Eventがある場合だけ、年移動後にその根拠を開く。
-  // Eventが無ければ移転や法的な喪失を推定せず、年初の保持記録だけを示す。
-  useEffect(()=>{
-    if(!pendingTitleJump||!v||v.year!==pendingTitleJump.year)return
-    const path='$.titles['+pendingTitleJump.titleId+'].holder'
-    const evidence=v.events.find(e=>e.eventType.split('+').includes('LEGAL_TITLE_TRANSFER')&&
-      e.stateChanges.some(c=>c.path===path||c.path.startsWith(path+'.')))
-    if(evidence){
-      setEventId(evidence.eventId)
-      setTraceId('')
-      setEventType('ALL')
-      setRelatedOnly(false)
-    }
-    setPendingTitleJump(null)
-  },[pendingTitleJump,v])
   return <section className="panel obs" aria-labelledby="obs-heading" data-testid="observation-main">
     <header className="obs-head">
       <div>
@@ -324,7 +318,7 @@ export function ObservationPanel(p:Props){
             年初の人物状態とは時点が異なります。非表示の記録も削除していません。</p>
           <ol className="obs-record-list" data-testid="obs-event-list">
             {events.slice(0,eventLimit).map(e=><li key={e.eventId}>
-              <button type="button" aria-pressed={eventId===e.eventId} onClick={()=>chooseEvent(e)}>
+              <button type="button" aria-pressed={chosenEvent?.eventId===e.eventId} onClick={()=>chooseEvent(e)}>
                 {readableEvent(e)}
               </button>
             </li>)}
