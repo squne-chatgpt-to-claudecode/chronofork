@@ -434,6 +434,8 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
     <div className="app">
       <header className="topbar">
         <h1>Project Chronofork</h1>
+        <details className="trial-help" data-testid="trial-guide-details">
+          <summary>試遊版について</summary>
         <p className="badge badge-warn" role="status" data-testid="experimental-banner">
           EXPERIMENTAL / CALIBRATION_ONLY ・試験計算（仮データ・partial）
         </p>
@@ -451,8 +453,6 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
             <dd data-testid="goal-status">{!comparison&&!workspaceOpen?'正式な勝敗は未成立（goal=null・技術試験のみ）':observation&&!comparison?'正式な勝敗は未成立（goal=null、技術判定は原史欄に表示）':goalStatusLabel(result)}</dd>
           </div>
         </dl>
-        <details className="trial-help" data-testid="trial-guide-details">
-          <summary>試験構成と現在できること</summary>
           <p className="lead" data-testid="trial-guide">
             この試験版でできること: 人物間信頼へ介入してA1を作り、同年の別ペアへ追加介入してA2まで再計算できます。A0/A1/A2の実Eventと判断根拠を観測します。正式な歴史・勝敗はまだ評価できません。
           </p>

@@ -14,7 +14,7 @@ export type EventSummary = Readonly<{ headline: string; lines: readonly string[]
 type Obj = Readonly<Record<string, unknown>>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
-const unknownRef = (id: Id) => `参照不明（${id}）`
+const unknownRef = (_id: Id) => '名前未確認'
 
 /** 合成名の末尾に付く内部キー「 (marriage:…)」を除いた表示名。元の名前は開発・検証情報に残る。 */
 export const shortPersonName = (name: string) => name.replace(/\s*\(.*$/, '')

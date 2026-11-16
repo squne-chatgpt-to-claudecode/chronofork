@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { titleLabel } from './title-history.ts'
+import type { TitleHoldingHistory } from './title-history.ts'
 import { A0FutureContext } from './A0FutureContext.tsx'
 import type { ObservationSlice } from '../branch-play-source.ts'
 import type { PlayProgress } from '../play-progress.ts'
@@ -46,6 +47,13 @@ const reason=(codes:readonly string[])=>codes.length
 const goalStatusText=(status:string)=>status==='ACHIEVED'?'条件を満たしている':
   status==='NOT_ACHIEVED'?'条件を満たしていない':status==='INVALID_INPUT'?'検証不能な入力':'評価対象外'
 
+type HolderView = TitleHoldingHistory['intervals'][number]['holder']
+const holderShort=(holder:HolderView|undefined):string=>{
+  if(!holder)return '記録なし'
+  if(holder.status==='UNDETERMINED')return '保持者未確定'
+  if(holder.status==='NOT_RECORDED')return '称号記録なし'
+  return shortPersonName(holder.personName)+(holder.life==='DEAD'?'（故人の名義）':'')
+}
 /** PR-2: 介入前の原史A0を、証拠のある履歴だけで調べる。WorldStateは選択年の年初。 */
 export function ObservationPanel(p:Props){
   const v=p.observation
@@ -57,6 +65,7 @@ export function ObservationPanel(p:Props){
   const [traceId,setTraceId]=useState('')
   const [eventType,setEventType]=useState('ALL')
   const [traceFilter,setTraceFilter]=useState('EVENTLESS')
+  const [showReasons,setShowReasons]=useState(false)
   const [relatedOnly,setRelatedOnly]=useState(false)
   const [eventLimit,setEventLimit]=useState(SHOW)
   const [traceLimit,setTraceLimit]=useState(SHOW)
@@ -73,7 +82,7 @@ export function ObservationPanel(p:Props){
     [associations,person])
   const eventRefs=new Set(refs.filter(x=>x.source.type==='EVENT').map(x=>(x.source as {eventId:string}).eventId))
   const traceRefs=new Set(refs.filter(x=>x.source.type==='TRACE').map(x=>(x.source as {traceId:string}).traceId))
-  const names=useMemo(()=>namesOf(v?.world),[v])
+  const names=useMemo(()=>namesOf(v?.world,v?.events),[v])
   const eventKind=(e:EventLogEntry)=>EVENT_CATEGORIES.find(c=>inCategory(e,c))?.label??labelOf(e.eventType)
   const readableEvent=(e:EventLogEntry)=>eventHeadline(e,names,eventKind(e))
   const isPeopleTitleEvent=(e:EventLogEntry)=>isObservationFocusEvent(e)
@@ -105,7 +114,7 @@ export function ObservationPanel(p:Props){
     if(first)setSelectedPerson(first)
   }
   const traceActor=(t:DecisionTrace)=>{
-    const label=(id:Id)=>shortPersonName(persons.find(x=>x.personId===id)?.name??id)
+    const label=(id:Id)=>names.person(id)??'名前未確認の人物'
     return t.actorRef.kind==='PERSON_PAIR'?t.actorRef.ids.map(label).join(' と ')
       :t.actorRef.kind==='PERSON'?label(t.actorRef.id):'人物以外の対象'
   }
@@ -123,7 +132,7 @@ export function ObservationPanel(p:Props){
   const titleTraces=title?(v?.traces??[]).filter(t=>
     titleEvents.some(e=>e.sourceTraceIds.includes(t.traceId)&&t.eventIds.includes(e.eventId))):[]
   const openTitleEvent=(id:string)=>{setEventId(id);setTraceId('');setEventType('ALL');setRelatedOnly(false)}
-  const openTitleTrace=(id:string)=>{setTraceId(id);setEventId('');setTraceFilter('ALL');setRelatedOnly(false)}
+  const openTitleTrace=(id:string)=>{setTraceId(id);setEventId('');setTraceFilter('ALL');setRelatedOnly(false);setShowReasons(true)}
   const goal=v?.technicalGoal
   const assessments=(goal?.status==='NOT_ACHIEVED'||goal?.status==='ACHIEVED')?goal.assessments:[]
   const territorialAssessments=assessments.filter(a=>v?.world.titles.find(t=>t.titleId===a.titleId)?.kind==='TERRITORIAL')
@@ -139,12 +148,11 @@ export function ObservationPanel(p:Props){
         <p className="obs-eyebrow">亡国の王冠 — 1250〜1350年</p>
         <h2 id="obs-heading">原史A0を観測する</h2>
         <p className="obs-question">1350年、ナルヴェン王朝には合法な世襲所領が残るのか？</p>
-        <p className="note">歴史がどう動くかを見て、人物・婚姻・土地称号（Title）と判断の記録を辿ります。調べた人物から介入を試せます。</p>
-        {!v&&!p.loading&&<p className="obs-guidance" data-testid="obs-intro">まだ原史の計算結果は表示していません。下のボタンで1250〜1350年の世界を計算します。</p>}
-        <p className="note">試験構成（EXPERIMENTAL / CALIBRATION_ONLY）。1350年の技術判定は正式な勝敗ではありません（goal=null）。</p>
+        <p className="note">結末から時代をさかのぼり、歴史の転換点を探そう。</p>
+        {!v&&!p.loading&&<p className="obs-guidance" data-testid="obs-intro">原史の観測を始めよう。</p>}
       </div>
       <div className="obs-seed-tools">
-        <label htmlFor="obs-seed-input">統合A0のseed
+        <label htmlFor="obs-seed-input">世界の条件（seed）
           <input id="obs-seed-input" data-testid="obs-seed-input" type="text" inputMode="numeric"
             value={p.seedText} disabled={p.loading} aria-invalid={!seedValid}
             onChange={e=>p.onSeedText(e.target.value)}/>
@@ -153,7 +161,7 @@ export function ObservationPanel(p:Props){
           onClick={()=>{setEventType('ALL');p.onLoad(v?.year??1250)}} disabled={p.loading||!seedValid}>
           {!v?'統合A0を計算して観測':seedMatches?'このseedの原史A0を再表示':'このseedで原史A0を計算'}
         </button>
-        {v&&<button type="button" data-testid="obs-reset" disabled={p.loading} onClick={p.onReset}>旧試験画面へ戻る</button>}
+        {v&&<button type="button" data-testid="obs-reset" disabled={p.loading} onClick={p.onReset}>開発用画面へ戻る</button>}
         {!seedValid&&<span className="missing" role="alert">seedは0以上の安全な整数で指定してください。</span>}
         {v&&!seedMatches&&<p role="status" data-testid="obs-seed-mismatch">
           表示中の原史はseed {v.seed}です。入力seedが異なるため、再観測するまでこの結果から介入できません。
@@ -168,6 +176,69 @@ export function ObservationPanel(p:Props){
     </div>}
     {p.error&&<p role="alert" data-testid="obs-error">観測に失敗しました（{p.error.code}）。{p.error.message}</p>}
     {v&&<div className="obs-body">
+      <div className="obs-goal obs-outcome" data-testid="obs-goal">
+        <h3>この歴史の目標</h3>
+        <p className="obs-outcome-lead">1350年、ナルヴェン家の世襲領地を残す</p>
+        {territorialAssessments.length>0&&<p data-testid="obs-goal-snapshot">
+          領地称号 {territorialAssessments.length}件中、条件を満たすもの {territorialAssessments.filter(a=>a.qualifies).length}件。
+        </p>}
+        <div className="obs-outcome-metrics">
+          <strong>{goal?goalStatusText(goal.status):'未判定'}</strong>
+          <span>原史A0・1350年初の試算</span>
+        </div>
+        <details>
+          <summary>結果と条件の詳細</summary>
+          <p>正式勝敗：未成立。技術判定：{goal?goalStatusText(goal.status)+'（'+goal.status+'）':'記録なし'}</p>
+          <p>承認済みの世襲領地と実効支配または委任が必要です。王位だけでは条件を満たしません。</p>
+        </details>
+        {assessments.length>0&&<details>
+          <summary>各領地の不足条件</summary>
+          <ul>{assessments.map(a=><li key={a.titleId}>
+            <strong>{(()=>{const t=v.world.titles.find(x=>x.titleId===a.titleId);
+              return t?titleLabel(t,v.world):a.titleId})()}</strong>：
+              {a.qualifies?'条件を満たしている（技術判定）':'不足している条件：'+reason(a.failures)}
+          </li>)}</ul>
+        </details>}
+        {goal?.status==='INVALID_INPUT'&&<p>計算結果の技術評価はデータ不正のため成立していません。</p>}
+      </div>
+      <section className="obs-title-index" data-testid="obs-title-timeline">
+        <h3>王位と領地の変遷</h3>
+        <div className="obs-title-index-grid">
+          {v.titleHistories.map(h=>{
+            const ending=h.intervals.find(x=>x.fromYear<=1350&&x.throughYear>=1350)
+            const last=h.intervals.length>1?h.intervals[h.intervals.length-1]:undefined
+            return <div className="obs-title-index-card" key={h.titleId}>
+              <strong>{h.label}</strong>
+              <span className={ending?.holder.status==='UNDETERMINED'?'obs-title-index-unsettled':''}>
+                1350年初：{holderShort(ending?.holder)}
+              </span>
+              {last&&<button type="button" data-testid={'obs-title-turning-'+h.titleId}
+                disabled={p.loading||!seedMatches}
+                onClick={()=>{setSelectedTitle(h.titleId);yearChange(last.fromYear-1)}}>
+                {last.fromYear-1}年の変化を調べる
+              </button>}
+            </div>
+          })}
+        </div>
+        <details className="obs-title-index-chronicle" data-testid="obs-title-chronicle">
+          <summary>称号の変化を年表で見る</summary>
+          <ol>{v.titleHistories.flatMap(h=>h.intervals.slice(1).map(interval=>({
+            key:h.titleId+':'+interval.fromYear,
+            titleId:h.titleId,label:h.label,year:interval.fromYear-1,
+            nextYear:interval.fromYear,holder:interval.holder,
+            evidenced:h.transfers.some(t=>t.year===interval.fromYear-1),
+          }))).sort((a,b)=>a.year-b.year||a.titleId.localeCompare(b.titleId)).map(row=>
+            <li key={row.key}>
+              <strong>{row.year}年</strong>・{row.label} → {row.nextYear}年初：{holderShort(row.holder)}
+              <span className="obs-context-label">{row.evidenced?'（称号移転の記録あり）':'（年初状態から確認）'}</span>
+              <button type="button" disabled={p.loading||!seedMatches}
+                data-testid={'obs-title-change-'+row.titleId+'-'+row.year}
+                onClick={()=>{setSelectedTitle(row.titleId);yearChange(row.year)}}>
+                {row.year}年の記録へ
+              </button>
+            </li>)}</ol>
+        </details>
+      </section>
       <div className="obs-year-nav">
         <label htmlFor="obs-year">年表・観測する年（年初）</label>
         <input id="obs-year" type="range" min={1250} max={1350} step={1}
@@ -212,7 +283,7 @@ export function ObservationPanel(p:Props){
       <div className="obs-two-col">
         <div className="obs-timeline">
           <h3>年表・{v.year}年に記録された出来事</h3>
-          <p className="note">最初は婚姻・出生・死亡・王朝帰属・土地Titleなどを示します。人口や補助人物の登録を含む全Eventも下から表示できます。</p>
+          <p className="note">婚姻・出生・死亡・称号の変化をたどれます。</p>
           <label>Event種別
             <select data-testid="obs-event-type" value={eventType} onChange={e=>{setEventType(e.target.value);setEventLimit(SHOW)}}>
               <option value="ALL">全種類</option>
@@ -262,13 +333,16 @@ export function ObservationPanel(p:Props){
                   const t=v.traces.find(x=>x.traceId===id)
                   return <p key={id}>{t
                     ?<><strong>{statusText(t.status)}</strong> — {traceActor(t)}／判断規則 {t.ruleId}
-                      <button type="button" onClick={()=>{setTraceId(id);setTraceFilter('ALL')}}>根拠を詳しく見る</button></>
+                      <button type="button" onClick={()=>{setTraceId(id);setTraceFilter('ALL');setShowReasons(true)}}>根拠を詳しく見る</button></>
                     :<>参照された判断 {id} の詳細は、この年の表示にはありません</>}</p>
                 })}
               </div>}
             <details><summary>検証用：Eventの出典・実状態差分（{chosenEvent.eventType}）</summary>
               <pre>{JSON.stringify(chosenEvent,null,2)}</pre></details>
           </div>}
+          <details className="obs-record-evidence" data-testid="obs-reasons" open={showReasons}
+            onToggle={e=>setShowReasons(e.currentTarget.open)}>
+            <summary>判断の根拠を調べる（{v.traces.length}件）</summary>
           <h3>DecisionTrace（実際の採否・判断根拠）</h3>
           <label>判断種別
             <select data-testid="obs-trace-filter" value={traceFilter} onChange={e=>{setTraceFilter(e.target.value);setTraceLimit(SHOW)}}>
@@ -296,6 +370,7 @@ export function ObservationPanel(p:Props){
               onClick={()=>{setEventId(id);setEventType('ALL')}}>関連Eventを開く</button>)}</div>
             <details><summary>DecisionTraceの詳細</summary><pre>{JSON.stringify(chosenTrace,null,2)}</pre></details>
           </div>}
+          </details>
         </div>
         <aside className="obs-person">
           <h3>この年の人物・法的関係</h3>
@@ -308,10 +383,10 @@ export function ObservationPanel(p:Props){
             disabled={p.loading} onYearSelect={yearChange} onTitleSelect={setSelectedTitle}/>}
           {person&&<FamilyTree world={v.world} personId={person} onSelectPerson={setSelectedPerson} onSelectTitle={setSelectedTitle}/>}
           <details className="obs-family-help">
-            <summary>子どもの数・配偶者の表示の意味</summary>
+            <summary>家系図の見方</summary>
             <p>子はこの年初までに確認できる親子関係（死亡した子も含む）です。</p>
             <p>配偶者はこの年に有効（ACTIVE）な婚姻だけを表示しています。「記録なし」は生涯未婚を意味しません。</p>
-            <p>出生は婚姻・両親の年齢・出生枠・CALIBRATION_ONLYの抽選に基づきます。実際の成立・不成立はその年のB-002 DecisionTraceで確認できます。</p>
+            <p>出生や婚姻の経緯は、その年の記録で確認できます。</p>
           </details>
           <label>称号の歴代保持者を調べる（王位・領地別）
             <select data-testid="obs-title-select" value={title?.titleId??''} onChange={e=>setSelectedTitle(e.target.value)}>
@@ -324,10 +399,10 @@ export function ObservationPanel(p:Props){
             <details><summary>技術情報：称号のIDと権利状態</summary>
               <p>ID：{title.titleId}／種類：{title.kind}／有効：{title.valid?'はい':'いいえ'}／承認：{title.recognition.status}</p>
             </details>
-            <p>保持と合法的な王朝存続判定は別の条件です。上段の1350年技術判定と、以下の選択年の実記録を区別してください。</p>
+            <p>王位と領地の称号は別々に記録されています。</p>
             {titleHistory&&<section className="obs-holder-history" data-testid="obs-title-history">
               <h5>歴代の保持者（年初の実記録）</h5>
-              <p className="note">各年の年初に確認された保持状況です。正式な継承の成立や移転理由を推定しません。</p>
+              <p className="note">年初の保持者記録。移転の根拠は下のEventで確認できます。</p>
               <ol>{titleHistory.intervals.map((period,i)=><li key={period.fromYear+'-'+i}>
                 <strong>{period.fromYear}{period.throughYear>period.fromYear?'〜'+period.throughYear:''}年初：</strong>
                 {period.holder.status==='HELD'
@@ -367,24 +442,7 @@ export function ObservationPanel(p:Props){
           <p className="note">介入は既存の人物間信頼調整のみです。対象者の適格性・成立・歴史変化は保証しません。</p>
         </aside>
       </div>
-      <div className="obs-goal" data-testid="obs-goal">
-        <h3>1350年の王朝存続条件 — 何が不足している？</h3>
-        <p>ナルヴェン王朝の存命人物が、承認済みで世襲可能な領地を保持し、直接支配または有効な委任を持つことが条件です。王位のみでは達成できません。</p>
-        {territorialAssessments.length>0&&<p data-testid="obs-goal-snapshot">
-          領地称号 {territorialAssessments.length}件中、条件を満たすもの {territorialAssessments.filter(a=>a.qualifies).length}件。
-        </p>}
-        <p>正式勝敗：未成立。技術判定：{goal?goalStatusText(goal.status)+'（'+goal.status+'）':'記録なし'}
-          （介入前A0・1350年初の実状態。正式なゲームの勝敗ではありません）</p>
-        {assessments.length>0&&<details>
-          <summary>各称号の不足理由（王位と領主権を区別）</summary>
-          <ul>{assessments.map(a=><li key={a.titleId}>
-            <strong>{(()=>{const t=v.world.titles.find(x=>x.titleId===a.titleId);
-              return t?titleLabel(t,v.world):a.titleId})()}</strong>：
-              {a.qualifies?'条件を満たしている（技術判定）':'不足している条件：'+reason(a.failures)}
-          </li>)}</ul>
-        </details>}
-        {goal?.status==='INVALID_INPUT'&&<p>計算結果の技術評価はデータ不正のため成立していません。</p>}
-      </div>
+
     </div>}
   </section>
 }

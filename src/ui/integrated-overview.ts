@@ -66,9 +66,20 @@ export function buildOverview(v:PlayView):IntegratedOverview{
 }
 
 /** 最終snapshotから引いた表示名。無い参照は「参照不明」とせずIDをそのまま返す。 */
-export function namesOf(w:WorldState|undefined):EventNames{
+/** 年初には存在しない人物も、当年の確定した人物作成Eventに記録された名前だけを解決する。 */
+export function namesOf(w:WorldState|undefined,events:readonly EventLogEntry[]=[]):EventNames{
+  const created=new Map<Id,string>()
+  for(const event of events){
+    if(!event.eventType.split('+').some(t=>['PERSON_BIRTH','PERSON_PROMOTE','PERSON_SUPPORTING_RECORD'].includes(t)))continue
+    for(const change of event.stateChanges){
+      const match=/^\$\.persons\[(.+)\]$/.exec(change.path)
+      if(!match||change.before!==null||typeof change.after!=='object'||change.after===null)continue
+      const next=change.after as {personId?:unknown;name?:unknown}
+      if(next.personId===match[1]&&typeof next.name==='string'&&next.name.trim())created.set(match[1],shortPersonName(next.name))
+    }
+  }
   return {
-    person:id=>{const p=w?.persons.find(x=>x.personId===id);return p?shortPersonName(p.name):undefined},
+    person:id=>{const p=w?.persons.find(x=>x.personId===id);return p?shortPersonName(p.name):created.get(id)},
     group:id=>w?.groups.find(g=>g.groupId===id)?.name,
     dynasty:id=>w?.legal.dynasties.find(d=>d.dynastyId===id)?.name,
     country:id=>w?.countries.find(c=>c.countryId===id)?.name,
@@ -77,7 +88,7 @@ export function namesOf(w:WorldState|undefined):EventNames{
 export function eventHeadline(e:EventLogEntry,names:EventNames,typeLabel:string):string{
   const d=describeEvent(e,names)
   if(d)return d.headline
-  const people=e.involvedRefs.flatMap(r=>r.kind==='PERSON'?[names.person(r.id)??r.id]:r.kind==='PERSON_PAIR'?r.ids.map(i=>names.person(i)??i):[])
+  const people=e.involvedRefs.flatMap(r=>r.kind==='PERSON'?[names.person(r.id)??'名前未確認の人物']:r.kind==='PERSON_PAIR'?r.ids.map(i=>names.person(i)??'名前未確認の人物'):[])
   return `${typeLabel}（${e.year}年）${people.length>0?' '+people.join('・'):''}`
 }
 

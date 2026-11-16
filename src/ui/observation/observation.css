@@ -82,3 +82,28 @@
 .obs-a0-future-titles ul{margin:0.35rem 0 0;padding-left:1.1rem;}
 .obs-a0-future-titles li{margin:0.3rem 0;line-height:1.5;overflow-wrap:anywhere;}
 @media(max-width:650px){.obs-a0-future-grid{grid-template-columns:1fr;}}
+
+/* 結末から探索する試作: 目標と称号の変遷を主導線に、開発者向け情報を畳む。 */
+.obs-outcome{display:grid;gap:0.35rem;padding:0.75rem 0.85rem;border:1px solid #aabbd0;border-radius:6px;background:#f5f8fc;}
+.obs-outcome h3{margin:0;font-size:1rem;}
+.obs-outcome-lead{font-size:1.09rem;font-weight:700;margin:0.25rem 0;line-height:1.4;}
+.obs-outcome-metrics{display:flex;gap:0.8rem;align-items:baseline;flex-wrap:wrap;}
+.obs-outcome-metrics strong{font-size:1.16rem;}
+.obs-outcome details{margin-top:0.25rem;font-size:0.86rem;}
+.obs-title-index{padding:0.75rem;border:1px solid var(--line);border-radius:6px;display:grid;gap:0.55rem;}
+.obs-title-index h3{margin:0;font-size:1.04rem;}
+.obs-title-index-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15.4rem),1fr));gap:0.45rem;}
+.obs-title-index-card{border:1px solid var(--line);border-radius:5px;padding:0.5rem 0.6rem;display:grid;gap:0.25rem;background:#fff;min-width:0;}
+.obs-title-index-card strong{font-size:0.9rem;}
+.obs-title-index-card span{font-size:0.85rem;}
+.obs-title-index-card button,.obs-title-index-chronicle button{background:#fff;border:1px solid #b9c9d9;border-radius:4px;padding:0.32rem 0.45rem;color:var(--accent);text-align:left;cursor:pointer;}
+.obs-title-index-unsettled{font-weight:700;color:#84462c;}
+.obs-title-index-chronicle{margin-top:0.2rem;}
+.obs-title-index-chronicle ol{margin:0.4rem 0 0;padding-left:1.6rem;max-height:18rem;overflow:auto;}
+.obs-title-index-chronicle li{margin:0.4rem 0;line-height:1.5;}
+.obs-title-index-chronicle li button{margin-left:0.5rem;}
+.obs-record-evidence{margin:0.35rem 0;}
+.obs-record-evidence details{padding:0.4rem 0.6rem;border-top:1px solid var(--line);}
+.obs-year-hints{background:#fff;}
+.obs-goal{margin:0;}
+@media(max-width:650px){.obs-title-index-chronicle li button{display:block;margin:0.2rem 0;}}
