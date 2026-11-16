@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { titleLabel } from './title-history.ts'
 import type { TitleHoldingHistory } from './title-history.ts'
 import { A0FutureContext } from './A0FutureContext.tsx'
@@ -66,6 +66,7 @@ export function ObservationPanel(p:Props){
   const [eventType,setEventType]=useState('ALL')
   const [traceFilter,setTraceFilter]=useState('EVENTLESS')
   const [showReasons,setShowReasons]=useState(false)
+  const [pendingTitleJump,setPendingTitleJump]=useState<{titleId:Id;year:number}|null>(null)
   const [relatedOnly,setRelatedOnly]=useState(false)
   const [eventLimit,setEventLimit]=useState(SHOW)
   const [traceLimit,setTraceLimit]=useState(SHOW)
@@ -142,6 +143,26 @@ export function ObservationPanel(p:Props){
     setEventLimit(SHOW);setTraceLimit(SHOW)
     if(y!==v?.year)p.onLoad(y)
   }
+  const goToTitleEvidence=(titleId:Id,year:number)=>{
+    setSelectedTitle(titleId)
+    setPendingTitleJump({titleId,year})
+    yearChange(year)
+  }
+  // 確定済みの称号変更Eventがある場合だけ、年移動後にその根拠を開く。
+  // Eventが無ければ移転や法的な喪失を推定せず、年初の保持記録だけを示す。
+  useEffect(()=>{
+    if(!pendingTitleJump||!v||v.year!==pendingTitleJump.year)return
+    const path='$.titles['+pendingTitleJump.titleId+'].holder'
+    const evidence=v.events.find(e=>e.eventType.split('+').includes('LEGAL_TITLE_TRANSFER')&&
+      e.stateChanges.some(c=>c.path===path||c.path.startsWith(path+'.')))
+    if(evidence){
+      setEventId(evidence.eventId)
+      setTraceId('')
+      setEventType('ALL')
+      setRelatedOnly(false)
+    }
+    setPendingTitleJump(null)
+  },[pendingTitleJump,v])
   return <section className="panel obs" aria-labelledby="obs-heading" data-testid="observation-main">
     <header className="obs-head">
       <div>
@@ -214,7 +235,7 @@ export function ObservationPanel(p:Props){
               </span>
               {last&&<button type="button" data-testid={'obs-title-turning-'+h.titleId}
                 disabled={p.loading||!seedMatches}
-                onClick={()=>{setSelectedTitle(h.titleId);yearChange(last.fromYear-1)}}>
+                onClick={()=>goToTitleEvidence(h.titleId,last.fromYear-1)}>
                 {last.fromYear-1}年の変化を調べる
               </button>}
             </div>
@@ -233,7 +254,7 @@ export function ObservationPanel(p:Props){
               <span className="obs-context-label">{row.evidenced?'（称号移転の記録あり）':'（年初状態から確認）'}</span>
               <button type="button" disabled={p.loading||!seedMatches}
                 data-testid={'obs-title-change-'+row.titleId+'-'+row.year}
-                onClick={()=>{setSelectedTitle(row.titleId);yearChange(row.year)}}>
+                onClick={()=>goToTitleEvidence(row.titleId,row.year)}>
                 {row.year}年の記録へ
               </button>
             </li>)}</ol>

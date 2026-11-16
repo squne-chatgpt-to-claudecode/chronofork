@@ -78,3 +78,31 @@ it('称号の年表は保持者未確定を正式な相続と断定せず、移�
   expect(list.textContent).toContain('年初状態から確認')
   expect(list.textContent).not.toContain('合法に相続')
 })
+
+
+it('年表から当年の実Title移転Eventへ直接進み、関連する根拠を調べられる',async()=>{
+  const crown=world.titles.find(t=>t.kind==='CROWN')!
+  const oldHolder=crown.holder.status==='HELD'?crown.holder.personId:'person-exp-01'
+  const next={...world,year:1251,titles:world.titles.map(t=>t.titleId===crown.titleId
+    ?{...t,holder:{status:'HELD' as const,personId:'person-exp-02'}}:t)}
+  const event={
+    eventId:'synthetic:title-change',eventType:'LEGAL_TITLE_TRANSFER',
+    year:1250,phase:4,semanticEventKey:'synthetic:title-change',
+    involvedRefs:[{kind:'PERSON',id:'person-exp-02'}],sourceTraceIds:[],
+    stateChanges:[{path:'$.titles['+crown.titleId+'].holder.personId',
+      before:oldHolder,after:'person-exp-02'}],
+  } as unknown as EventLogEntry
+  const v:ObservationSlice={
+    seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',year:1250,world,
+    events:[event],traces:[],counts:[],candidates:{seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',candidates:[]},
+    titleHistories:buildTitleHoldingHistories([world,next],[event]),
+    knownA0Ending:null,technicalGoal:null,goal:null,status:'COMPLETED',a0Source:'COMPUTED',
+  }
+  const onLoad=vi.fn()
+  render(<ObservationPanel observation={v} loading={false} seedText="20260101"
+    onSeedText={vi.fn()} onReset={vi.fn()} onLoad={onLoad} onCancel={vi.fn()} onIntervene={vi.fn()}/>)
+  fireEvent.click(screen.getByTestId('obs-title-turning-'+crown.titleId))
+  expect(screen.getByTestId('obs-title-detail')).toBeTruthy()
+  expect(screen.getByTestId('obs-event-detail').textContent).toContain('称号の移転')
+  expect(onLoad).not.toHaveBeenCalled() // 同じ処理年のEventを開くだけ
+})
