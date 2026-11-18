@@ -2,7 +2,7 @@
 import type { EventLogEntry, Id, Person, WorldState } from '../simulation/contracts/index.ts'
 import type { PlayView } from './branch-play-source.ts'
 import { descendantDepths } from './dynasty-continuity.ts'
-import { describeEvent, shortPersonName } from './event-summary.ts'
+import { describeEvent, shortPersonName, unresolvedLabel } from './event-summary.ts'
 import type { EventNames } from './event-summary.ts'
 
 export type EventCategory=Readonly<{key:string;label:string;types:readonly string[]}>
@@ -65,7 +65,7 @@ export function buildOverview(v:PlayView):IntegratedOverview{
   return {rows,totalDifferences,finalWorldIdentical,interventionTraces:{a0:used(v.a0),a1:used(v.a1)}}
 }
 
-/** 最終snapshotから引いた表示名。無い参照は「参照不明」とせずIDをそのまま返す。 */
+/** 最終snapshotから引いた表示名。無い参照はundefined（表示側でunresolvedLabelへ）。 */
 export function namesOf(w:WorldState|undefined):EventNames{
   return {
     person:id=>{const p=w?.persons.find(x=>x.personId===id);return p?shortPersonName(p.name):undefined},
@@ -88,7 +88,7 @@ export function namesOfYear(w:WorldState|undefined,events:readonly EventLogEntry
 export function eventHeadline(e:EventLogEntry,names:EventNames,typeLabel:string):string{
   const d=describeEvent(e,names)
   if(d)return d.headline
-  const people=e.involvedRefs.flatMap(r=>r.kind==='PERSON'?[names.person(r.id)??r.id]:r.kind==='PERSON_PAIR'?r.ids.map(i=>names.person(i)??i):[])
+  const people=e.involvedRefs.flatMap(r=>r.kind==='PERSON'?[names.person(r.id)??unresolvedLabel('person',r.id)]:r.kind==='PERSON_PAIR'?r.ids.map(i=>names.person(i)??unresolvedLabel('person',i)):[])
   return `${typeLabel}（${e.year}年）${people.length>0?' '+people.join('・'):''}`
 }
 
@@ -102,8 +102,8 @@ export function lineageRows(initial:WorldState,final:WorldState|undefined):reado
   const initialIds=new Set(initial.persons.map(p=>p.personId))
   const depths=descendantDepths(initial,final.persons)
   const names=namesOf(final)
-  const parent=(id:Id|undefined)=>id===undefined?'記録なし':names.person(id)??id
-  const dyn=(p:Person)=>p.legalDynasty.status==='DETERMINED'?names.dynasty(p.legalDynasty.dynastyId)??p.legalDynasty.dynastyId:'未確定'
+  const parent=(id:Id|undefined)=>id===undefined?'記録なし':names.person(id)??unresolvedLabel('person',id)
+  const dyn=(p:Person)=>p.legalDynasty.status==='DETERMINED'?names.dynasty(p.legalDynasty.dynastyId)??unresolvedLabel('dynasty',p.legalDynasty.dynastyId):'未確定'
   return final.persons.filter(p=>!initialIds.has(p.personId)&&p.birthYear>=initial.year)
     .map(p=>({personId:p.personId,name:shortPersonName(p.name),birthYear:p.birthYear,generation:depths.get(p.personId)??-1,
       father:parent(p.fatherId),mother:parent(p.motherId),dynasty:dyn(p),alive:p.alive}))
@@ -120,8 +120,8 @@ export function titleRows(final:WorldState|undefined):readonly TitleRow[]{
   const names=namesOf(final)
   return final.titles.filter(t=>t.kind==='TERRITORIAL').map(t=>({
     titleId:t.titleId,
-    region:final.regions.find(r=>r.regionId===t.regionId)?.name??t.regionId,
-    holder:t.holder.status==='HELD'?(names.person(t.holder.personId)??t.holder.personId):'保持者未確定',
+    region:final.regions.find(r=>r.regionId===t.regionId)?.name??unresolvedLabel('region',t.regionId),
+    holder:t.holder.status==='HELD'?(names.person(t.holder.personId)??unresolvedLabel('person',t.holder.personId)):'保持者未確定',
     holderUndetermined:t.holder.status!=='HELD',
     pendingCases:final.legal.cases.filter(c=>c.titleId===t.titleId&&c.kind==='SUCCESSION'&&c.status==='PENDING').length,
     mandatesInPeriod:final.legal.controlMandates.filter(m=>m.regionId===t.regionId&&m.effectiveFromYear<=final.year&&final.year<m.endExclusiveYear).length,

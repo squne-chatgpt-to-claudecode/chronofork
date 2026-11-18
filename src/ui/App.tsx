@@ -440,9 +440,10 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
     <div className="app">
       <header className="topbar">
         <h1>Project Chronofork</h1>
-        <p className="badge badge-warn" role="status" data-testid="experimental-banner">
-          EXPERIMENTAL / CALIBRATION_ONLY ・試験計算（仮データ・partial）
-        </p>
+        <div className="badge badge-warn" role="status" data-testid="experimental-banner">
+          試験計算（仮データ・一部のみ実装）
+          <details className="dev-details"><summary>技術情報</summary>EXPERIMENTAL / CALIBRATION_ONLY</details>
+        </div>
         <dl className="status-list">
           {(!observation||!!comparison)&&<div>
             <dt>観測中の年</dt>
@@ -454,7 +455,7 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
           </div>
           <div>
             <dt>1350年の正式勝敗</dt>
-            <dd data-testid="goal-status">{!comparison&&!workspaceOpen?'正式な勝敗は未成立（goal=null・技術試験のみ）':observation&&!comparison?'正式な勝敗は未成立（goal=null、技術判定は原史欄に表示）':goalStatusLabel(result)}</dd>
+            <dd data-testid="goal-status">{!comparison&&!workspaceOpen?'正式な勝敗は未成立（試験版）':observation&&!comparison?'正式な勝敗は未成立（参考判定は原史欄に表示）':goalStatusLabel(result)}</dd>
           </div>
         </dl>
         <details className="trial-help" data-testid="trial-guide-details">

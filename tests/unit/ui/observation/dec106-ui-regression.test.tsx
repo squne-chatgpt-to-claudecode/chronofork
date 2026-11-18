@@ -50,11 +50,31 @@ describe('DEC-106 UI回帰',()=>{
     expect(readable).not.toMatch(/person:b002:auto|参照不明/)
     expect(detail.querySelector('pre')!.textContent).toContain(BORN)
   })
-  it('名前を裏付けるEventが無い人物の名前を推測せず、内部IDを人物名として出さない境界は維持する',()=>{
+  it('名前を裏付けるEventが無い人物は名前を創作せず、生IDも通常表示に出さない（技術詳細にIDは残る）',()=>{
     const orphan='person:b002:auto:1252:orphan'
-    render(<ObservationPanel {...props} observation={make([dyn(orphan)])} loading={false}/>)
-    // 名前は生成しない（既存契約の「参照不明」表示に留まる）。実在名は出さない。
-    expect(screen.getByTestId('obs-event-list').textContent).not.toContain('エルド')
+    const other='person:b002:auto:1252:other'
+    render(<ObservationPanel {...props} observation={make([dyn(orphan),dyn(other)])} loading={false}/>)
+    const list=screen.getByTestId('obs-event-list').textContent!
+    expect(list).not.toContain('エルド')
+    expect(list).not.toMatch(/person:|b002:auto|orphan|参照不明/)
+    expect(list).toContain('名前未確認の人物')
+    // 別人物は別の識別になり、同一人物と誤示しない。
+    const labels=list.match(/名前未確認の人物（識別[0-9A-Z]+）/g)!
+    expect(new Set(labels).size).toBe(2)
+    fireEvent.click(screen.getAllByText(/法的王朝が/)[0]!)
+    const detail=screen.getByTestId('obs-event-detail')
+    const readable=[...detail.querySelectorAll('h4,p')].map(n=>n.textContent).join('\n')
+    expect(readable).not.toMatch(/person:b002|参照不明/)
+    expect(detail.querySelector('pre')!.textContent).toMatch(/person:b002:auto:1252:(orphan|other)/)
+  })
+  it('通常の目標欄に理由コード・goal=nullを出さず、技術詳細へ分離して保持する',()=>{
+    render(<ObservationPanel {...props} observation={make([])} loading={false}/>)
+    const goal=screen.getByTestId('obs-goal').cloneNode(true) as HTMLElement
+    const dev=[...goal.querySelectorAll('details.dev-details')]
+    dev.forEach(d=>d.remove())
+    expect(goal.textContent).toContain('正式勝敗：未成立')
+    expect(goal.textContent).not.toMatch(/goal=null|CALIBRATION_ONLY|[A-Z]{2,}_[A-Z_]+/)
+    expect((screen.getByTestId('obs-dev-info').textContent)).toContain('goal=null')
   })
   it('原史の結果（正式勝敗・技術判定・不足条件）が年表・人物欄より前に現れる',()=>{
     render(<ObservationPanel {...props} observation={make([])} loading={false}/>)

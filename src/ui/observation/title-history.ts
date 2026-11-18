@@ -1,5 +1,6 @@
 // 年初のWorldStateに記録された各Title保持者の推移。正式な相続や在位の成立を推測しない。
 // イベントで確定した移転記録は別に紐づけ、年初保持者の変化と区別する。
+import { unresolvedLabel } from '../event-summary.ts'
 import type { EventLogEntry, Id, Title, WorldState } from '../../simulation/contracts/index.ts'
 
 export type TitleHoldingInterval = Readonly<{
@@ -24,9 +25,9 @@ export function titleLabel(title:Title,world:WorldState):string{
   if(title.kind==='CROWN'){
     const country=world.countries.find(c=>c.countryId===region?.sovereignCountryId)
     return country?country.name+'王位（王冠称号）':
-      '王冠称号（地域ID: '+title.regionId+'／国名未確認）'
+      '王冠称号（'+unresolvedLabel('country',title.regionId)+'）'
   }
-  return region?region.name+'の領主権（領地称号）':'領地称号（地域ID: '+title.regionId+'／地域名未確認）'
+  return region?region.name+'の領主権（領地称号）':'領地称号（'+unresolvedLabel('region',title.regionId)+'）'
 }
 
 /** 年初の保持者だけで期間をまとめる。保持変更を正式な世襲・移転Eventとみなさない。 */

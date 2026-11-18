@@ -5,7 +5,7 @@ import { compareYear, directlyInvolvesPair, playPersonOptions, playModeLabel, IN
 import { observeDynastyContinuity } from './dynasty-continuity.ts'
 import type { ContinuityObservation } from './dynasty-continuity.ts'
 import { NALVEN_DYNASTY_ID } from '../scenario/experimental/index.ts'
-import { childIdsOfPair } from './event-summary.ts'
+import { childIdsOfPair, unresolvedLabel } from './event-summary.ts'
 import type { BranchChoice, PlayInput, PlayMode, PlayView } from './branch-play-source.ts'
 import { candidateLabel, candidateSetMatches, candidatesAtYear, extractCandidates } from './play-candidates.ts'
 import type { PlayCandidateSet } from './play-candidates.ts'
@@ -141,7 +141,7 @@ export function InterventionComparePanel(p:Props){
   // 表示名: 現在の候補→表示中の比較のA0→初期人物。どれにも無いときだけIDを出す。
   const personName=(id:string)=>{
     const c=activeSet?.candidates.find(x=>x.id===id)??comparisonSet?.candidates.find(x=>x.id===id)
-    return c?candidateLabel(c):persons.find(x=>x.id===id)?.label??id
+    return c?candidateLabel(c):persons.find(x=>x.id===id)?.label??unresolvedLabel('person',id)
   }
   const personOptions=(selected:string)=>{
     const list=options.map(x=><option key={x.id} value={x.id}>{x.label}</option>)
@@ -182,7 +182,7 @@ export function InterventionComparePanel(p:Props){
   const titleLabel=(titleId:string)=>{
     const regionId=finalA0?.titles.find(t=>t.titleId===titleId)?.regionId
     const region=finalA0?.regions.find(r=>r.regionId===regionId)
-    return region?region.name+'（'+titleId+'）':titleId
+    return region?region.name+'の領地称号':'名前未確認の称号'
   }
   const pair=input?[input.firstPersonId,input.secondPersonId].sort() as [string,string]:PLAY_DEMO_PAIR
   const b4=(choice:BranchChoice)=>p.comparison?.[choice.toLowerCase() as 'a0'|'a1'].result.decisionTraces.find(t=>

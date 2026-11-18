@@ -174,8 +174,8 @@ describe('FamilyTree モデル/表示', () => {
     expect(screen.getByTestId('family-unconfirmed-ghost2')).toBeTruthy()
     expect(screen.getByTestId('family-unconfirmed-me')).toBeTruthy()
     expect(screen.getByTestId('family-house').textContent).toContain('確認できない')
-    expect(screen.getByTestId('family-legal-dynasty').textContent).toContain('王朝名を確認できない')
-    expect(screen.getByTestId('family-title-t1').textContent).toContain('地域ID: rX')
+    expect(screen.getByTestId('family-legal-dynasty').textContent).toContain('名前未確認の王朝')
+    expect(screen.getByTestId('family-title-t1').textContent).toMatch(/名前未確認の地域（識別/)
   })
 
   it('存在しない人物IDでもクラッシュしない', () => {

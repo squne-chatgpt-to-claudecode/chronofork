@@ -74,7 +74,7 @@ test.describe('DEC-106: 原史の結末から遡る試遊可能性の証拠収�
     await page.getByTestId('obs-event-type').selectOption('LEGAL_DYNASTY_SET')
     const events=await page.getByTestId('obs-event-list').innerText()
     result.checks['born_same_year_name']={
-      items:events.slice(0,1800),rawInternalId:/person:b002:auto:|参照不明（person:/.test(events),
+      items:events.slice(0,1800),rawInternalId:/person:|参照不明/.test(events+'\n'+await page.locator('main').innerText()),
       type:'LEGAL_DYNASTY_SET'}
     await page.getByTestId('obs-event-list').scrollIntoViewIfNeeded()
     await screenshot('04-name-evidence.png')

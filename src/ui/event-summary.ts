@@ -14,15 +14,25 @@ export type EventSummary = Readonly<{ headline: string; lines: readonly string[]
 type Obj = Readonly<Record<string, unknown>>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
-const unknownRef = (id: Id) => `参照不明（${id}）`
+/** 名前を裏付ける記録が無い参照の通常表示用ラベル。生IDは出さず、同じ参照には同じ識別、別の参照には別の識別（32bit FNV-1a）を付ける。
+ * 名前は創作しない。元のIDはEvent/Trace/技術詳細にそのまま残る。 */
+export type UnresolvedKind = 'person' | 'group' | 'dynasty' | 'country' | 'region' | 'other'
+const UNRESOLVED_NOUN: Readonly<Record<UnresolvedKind, string>> = {
+  person: '人物', group: '集団', dynasty: '王朝', country: '国', region: '地域', other: '対象',
+}
+export const unresolvedLabel = (kind: UnresolvedKind, id: Id): string => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+  return `名前未確認の${UNRESOLVED_NOUN[kind]}（識別${h.toString(36).toUpperCase().padStart(7, '0')}）`
+}
 
 /** 合成名の末尾に付く内部キー「 (marriage:…)」を除いた表示名。元の名前は開発・検証情報に残る。 */
 export const shortPersonName = (name: string) => name.replace(/\s*\(.*$/, '')
 
 export function describeEvent(e: EventLogEntry, names: EventNames): EventSummary | undefined {
-  const person = (id: Id) => names.person(id) ?? unknownRef(id)
-  const group = (id: Id) => names.group(id) ?? unknownRef(id)
-  const dynasty = (id: Id) => names.dynasty(id) ?? unknownRef(id)
+  const person = (id: Id) => names.person(id) ?? unresolvedLabel('person', id)
+  const group = (id: Id) => names.group(id) ?? unresolvedLabel('group', id)
+  const dynasty = (id: Id) => names.dynasty(id) ?? unresolvedLabel('dynasty', id)
   switch (e.eventType) {
     case 'MARRIAGE_REGISTER': {
       const after = e.stateChanges.find((c) => c.path.startsWith('$.legal.marriages[') && c.before === null)?.after
@@ -70,7 +80,7 @@ export function describeEvent(e: EventLogEntry, names: EventNames): EventSummary
       const before = str(change.before), after = str(change.after)
       if (!after && change.after !== null) return undefined
       if (e.eventType === 'COUNTRY_RULER_VACATE' && after) return undefined
-      const country = names.country?.(ref.id) ?? ref.id
+      const country = names.country?.(ref.id) ?? unresolvedLabel('country', ref.id)
       return {
         headline: after
           ? country + 'の統治者記録が' + person(after) + 'に更新（' + e.year + '年）'

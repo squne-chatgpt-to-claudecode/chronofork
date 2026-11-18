@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react'
 import type { Id, WorldState } from '../../simulation/contracts/index.ts'
 import { titleLabel } from './title-history.ts'
-import { shortPersonName } from '../event-summary.ts'
+import { shortPersonName, unresolvedLabel } from '../event-summary.ts'
 import {
   buildFamilyTreeModel,
   type AffiliationView,
@@ -80,7 +80,7 @@ function Slot({ slot, role, onSelect }: { slot: ParentSlot; role: string; onSele
 function legalText(a: AffiliationView['legalDynasty']): string {
   if (a.status === 'UNDETERMINED') return '未確定（記録上、法的王朝所属は確定していない）'
   if (a.status === 'DETERMINED') return a.name
-  return `確定済みだが王朝名を確認できない（ID: ${a.dynastyId}）`
+  return `確定済みだが${unresolvedLabel('dynasty', a.dynastyId)}`
 }
 
 function TitleItem({ t, displayName, onSelect }: { t: TitleView; displayName: string; onSelect?: (id: Id) => void }) {
@@ -117,8 +117,8 @@ export function FamilyTree({ world, personId, onSelectPerson, onSelectTitle }: F
         <h3 id={headingId}>人物の家系・関係（{model.year}年初）</h3>
         <p className="ft-note" data-testid="family-tree-unavailable">
           {model.status === 'PERSON_NOT_FOUND'
-            ? `ID ${model.personId} の人物は、この年の記録に確認できません。`
-            : `ID ${model.personId} の人物は${model.year}年初には未出生です（${model.birthYear}年生）。関係は表示しません。`}
+            ? `${unresolvedLabel('person', model.personId)}は、この年の記録に確認できません。`
+            : `${unresolvedLabel('person', model.personId)}は${model.year}年初には未出生です（${model.birthYear}年生）。関係は表示しません。`}
         </p>
       </section>
     )
@@ -191,7 +191,7 @@ export function FamilyTree({ world, personId, onSelectPerson, onSelectTitle }: F
           <>
             <dt>血統記録（法的王朝とは別）</dt>
             <dd data-testid="family-bloodline">
-              {affiliation.bloodlineDynasty.status === 'CONFIRMED' ? affiliation.bloodlineDynasty.name : `王朝名を確認できない（ID: ${affiliation.bloodlineDynasty.dynastyId}）`}
+              {affiliation.bloodlineDynasty.status === 'CONFIRMED' ? affiliation.bloodlineDynasty.name : unresolvedLabel('dynasty', affiliation.bloodlineDynasty.dynastyId)}
             </dd>
           </>
         )}
@@ -204,7 +204,7 @@ export function FamilyTree({ world, personId, onSelectPerson, onSelectTitle }: F
               {titles.map((t) => {
                 const record=world.titles.find(x=>x.titleId===t.titleId)
                 return <TitleItem key={t.titleId} t={t}
-                  displayName={record?titleLabel(record,world):t.titleId}
+                  displayName={record?titleLabel(record,world):'名前未確認の称号'}
                   {...(onSelectTitle ? { onSelect: onSelectTitle } : {})}/>
               })}
             </ul>
