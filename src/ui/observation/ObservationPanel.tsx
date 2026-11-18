@@ -5,7 +5,7 @@ import type { ObservationSlice } from '../branch-play-source.ts'
 import type { PlayProgress } from '../play-progress.ts'
 import { associationsFor, collectAssociations } from './associations.ts'
 import { FamilyTree } from './FamilyTree.tsx'
-import { eventHeadline, namesOf, EVENT_CATEGORIES, inCategory, isObservationFocusEvent } from '../integrated-overview.ts'
+import { eventHeadline, namesOfYear, EVENT_CATEGORIES, inCategory, isObservationFocusEvent } from '../integrated-overview.ts'
 import { describeEvent, shortPersonName } from '../event-summary.ts'
 import type { EventLogEntry, DecisionTrace, Id } from '../../simulation/contracts/index.ts'
 import type { GoalFailureCode } from '../../simulation/goal.ts'
@@ -60,6 +60,7 @@ export function ObservationPanel(p:Props){
   const [relatedOnly,setRelatedOnly]=useState(false)
   const [eventLimit,setEventLimit]=useState(SHOW)
   const [traceLimit,setTraceLimit]=useState(SHOW)
+  const [traceOpen,setTraceOpen]=useState(false)
   const [showAllEvents,setShowAllEvents]=useState(false)
   const [yearHintLimit,setYearHintLimit]=useState(8)
   const [scrubYear,setScrubYear]=useState<number|null>(null) // ドラッグ中のみ表示を更新する
@@ -73,7 +74,7 @@ export function ObservationPanel(p:Props){
     [associations,person])
   const eventRefs=new Set(refs.filter(x=>x.source.type==='EVENT').map(x=>(x.source as {eventId:string}).eventId))
   const traceRefs=new Set(refs.filter(x=>x.source.type==='TRACE').map(x=>(x.source as {traceId:string}).traceId))
-  const names=useMemo(()=>namesOf(v?.world),[v])
+  const names=useMemo(()=>namesOfYear(v?.world,v?.events??[]),[v])
   const eventKind=(e:EventLogEntry)=>EVENT_CATEGORIES.find(c=>inCategory(e,c))?.label??labelOf(e.eventType)
   const readableEvent=(e:EventLogEntry)=>eventHeadline(e,names,eventKind(e))
   const isPeopleTitleEvent=(e:EventLogEntry)=>isObservationFocusEvent(e)
@@ -105,7 +106,7 @@ export function ObservationPanel(p:Props){
     if(first)setSelectedPerson(first)
   }
   const traceActor=(t:DecisionTrace)=>{
-    const label=(id:Id)=>shortPersonName(persons.find(x=>x.personId===id)?.name??id)
+    const label=(id:Id)=>names.person(id)??shortPersonName(persons.find(x=>x.personId===id)?.name??id)
     return t.actorRef.kind==='PERSON_PAIR'?t.actorRef.ids.map(label).join(' と ')
       :t.actorRef.kind==='PERSON'?label(t.actorRef.id):'人物以外の対象'
   }
@@ -123,7 +124,7 @@ export function ObservationPanel(p:Props){
   const titleTraces=title?(v?.traces??[]).filter(t=>
     titleEvents.some(e=>e.sourceTraceIds.includes(t.traceId)&&t.eventIds.includes(e.eventId))):[]
   const openTitleEvent=(id:string)=>{setEventId(id);setTraceId('');setEventType('ALL');setRelatedOnly(false)}
-  const openTitleTrace=(id:string)=>{setTraceId(id);setEventId('');setTraceFilter('ALL');setRelatedOnly(false)}
+  const openTitleTrace=(id:string)=>{setTraceId(id);setTraceOpen(true);setEventId('');setTraceFilter('ALL');setRelatedOnly(false)}
   const goal=v?.technicalGoal
   const assessments=(goal?.status==='NOT_ACHIEVED'||goal?.status==='ACHIEVED')?goal.assessments:[]
   const territorialAssessments=assessments.filter(a=>v?.world.titles.find(t=>t.titleId===a.titleId)?.kind==='TERRITORIAL')
@@ -168,6 +169,24 @@ export function ObservationPanel(p:Props){
     </div>}
     {p.error&&<p role="alert" data-testid="obs-error">観測に失敗しました（{p.error.code}）。{p.error.message}</p>}
     {v&&<div className="obs-body">
+      <div className="obs-goal" data-testid="obs-goal">
+        <h3>1350年の王朝存続条件 — 何が不足している？</h3>
+        <p>ナルヴェン王朝の存命人物が、承認済みで世襲可能な領地を保持し、直接支配または有効な委任を持つことが条件です。王位のみでは達成できません。</p>
+        {territorialAssessments.length>0&&<p data-testid="obs-goal-snapshot">
+          領地称号 {territorialAssessments.length}件中、条件を満たすもの {territorialAssessments.filter(a=>a.qualifies).length}件。
+        </p>}
+        <p>正式勝敗：未成立。技術判定：{goal?goalStatusText(goal.status)+'（'+goal.status+'）':'記録なし'}
+          （介入前A0・1350年初の実状態。正式なゲームの勝敗ではありません）</p>
+        {assessments.length>0&&<details open>
+          <summary>各称号の不足理由（王位と領主権を区別）</summary>
+          <ul>{assessments.map(a=><li key={a.titleId}>
+            <strong>{(()=>{const t=v.world.titles.find(x=>x.titleId===a.titleId);
+              return t?titleLabel(t,v.world):a.titleId})()}</strong>：
+              {a.qualifies?'条件を満たしている（技術判定）':'不足している条件：'+reason(a.failures)}
+          </li>)}</ul>
+        </details>}
+        {goal?.status==='INVALID_INPUT'&&<p>計算結果の技術評価はデータ不正のため成立していません。</p>}
+      </div>
       <div className="obs-year-nav">
         <label htmlFor="obs-year">年表・観測する年（年初）</label>
         <input id="obs-year" type="range" min={1250} max={1350} step={1}
@@ -262,14 +281,16 @@ export function ObservationPanel(p:Props){
                   const t=v.traces.find(x=>x.traceId===id)
                   return <p key={id}>{t
                     ?<><strong>{statusText(t.status)}</strong> — {traceActor(t)}／判断規則 {t.ruleId}
-                      <button type="button" onClick={()=>{setTraceId(id);setTraceFilter('ALL')}}>根拠を詳しく見る</button></>
+                      <button type="button" onClick={()=>{setTraceId(id);setTraceOpen(true);setTraceFilter('ALL')}}>根拠を詳しく見る</button></>
                     :<>参照された判断 {id} の詳細は、この年の表示にはありません</>}</p>
                 })}
               </div>}
             <details><summary>検証用：Eventの出典・実状態差分（{chosenEvent.eventType}）</summary>
               <pre>{JSON.stringify(chosenEvent,null,2)}</pre></details>
           </div>}
-          <h3>DecisionTrace（実際の採否・判断根拠）</h3>
+          <details className="obs-technical" data-testid="obs-technical" open={traceOpen}
+            onToggle={e=>setTraceOpen(e.currentTarget.open)}>
+          <summary>技術的な詳細：DecisionTrace（実際の採否・判断根拠）</summary>
           <label>判断種別
             <select data-testid="obs-trace-filter" value={traceFilter} onChange={e=>{setTraceFilter(e.target.value);setTraceLimit(SHOW)}}>
               <option value="EVENTLESS">EventなしのDEFER・REJECT</option>
@@ -282,7 +303,7 @@ export function ObservationPanel(p:Props){
           <p className="note" data-testid="obs-trace-count">この年のTrace {v.traces.length}件／表示条件に一致 {traces.length}件。Eventのない判断も含みます。</p>
           <ol className="obs-record-list" data-testid="obs-trace-list">
             {traces.slice(0,traceLimit).map(t=><li key={t.traceId}>
-              <button type="button" aria-pressed={traceId===t.traceId} onClick={()=>{setTraceId(t.traceId);setEventId('')}}>
+              <button type="button" aria-pressed={traceId===t.traceId} onClick={()=>{setTraceId(t.traceId);setTraceOpen(true);setEventId('')}}>
                 {statusText(t.status)}／{traceActor(t)}（規則 {t.ruleId}・{t.status}、Event {t.eventIds.length}件）
               </button>
             </li>)}
@@ -296,6 +317,7 @@ export function ObservationPanel(p:Props){
               onClick={()=>{setEventId(id);setEventType('ALL')}}>関連Eventを開く</button>)}</div>
             <details><summary>DecisionTraceの詳細</summary><pre>{JSON.stringify(chosenTrace,null,2)}</pre></details>
           </div>}
+          </details>
         </div>
         <aside className="obs-person">
           <h3>この年の人物・法的関係</h3>
@@ -366,24 +388,6 @@ export function ObservationPanel(p:Props){
             </button>}
           <p className="note">介入は既存の人物間信頼調整のみです。対象者の適格性・成立・歴史変化は保証しません。</p>
         </aside>
-      </div>
-      <div className="obs-goal" data-testid="obs-goal">
-        <h3>1350年の王朝存続条件 — 何が不足している？</h3>
-        <p>ナルヴェン王朝の存命人物が、承認済みで世襲可能な領地を保持し、直接支配または有効な委任を持つことが条件です。王位のみでは達成できません。</p>
-        {territorialAssessments.length>0&&<p data-testid="obs-goal-snapshot">
-          領地称号 {territorialAssessments.length}件中、条件を満たすもの {territorialAssessments.filter(a=>a.qualifies).length}件。
-        </p>}
-        <p>正式勝敗：未成立。技術判定：{goal?goalStatusText(goal.status)+'（'+goal.status+'）':'記録なし'}
-          （介入前A0・1350年初の実状態。正式なゲームの勝敗ではありません）</p>
-        {assessments.length>0&&<details>
-          <summary>各称号の不足理由（王位と領主権を区別）</summary>
-          <ul>{assessments.map(a=><li key={a.titleId}>
-            <strong>{(()=>{const t=v.world.titles.find(x=>x.titleId===a.titleId);
-              return t?titleLabel(t,v.world):a.titleId})()}</strong>：
-              {a.qualifies?'条件を満たしている（技術判定）':'不足している条件：'+reason(a.failures)}
-          </li>)}</ul>
-        </details>}
-        {goal?.status==='INVALID_INPUT'&&<p>計算結果の技術評価はデータ不正のため成立していません。</p>}
       </div>
     </div>}
   </section>

@@ -82,3 +82,4 @@
 .obs-a0-future-titles ul{margin:0.35rem 0 0;padding-left:1.1rem;}
 .obs-a0-future-titles li{margin:0.3rem 0;line-height:1.5;overflow-wrap:anywhere;}
 @media(max-width:650px){.obs-a0-future-grid{grid-template-columns:1fr;}}
+.obs-technical{margin-top:0.7rem;} .obs-technical>summary{cursor:pointer;font-weight:600;}

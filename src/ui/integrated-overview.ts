@@ -74,6 +74,17 @@ export function namesOf(w:WorldState|undefined):EventNames{
     country:id=>w?.countries.find(c=>c.countryId===id)?.name,
   }
 }
+/** 年初snapshotに加え、同じ年の確定PERSON_BIRTH Eventに記録された人物名だけを解決に使う（IDから名前は生成しない）。 */
+export function namesOfYear(w:WorldState|undefined,events:readonly EventLogEntry[]):EventNames{
+  const base=namesOf(w)
+  const born=new Map<Id,string>()
+  for(const e of events){
+    if(e.eventType!=='PERSON_BIRTH')continue
+    const after=e.stateChanges.find(c=>c.path.startsWith('$.persons[')&&c.before===null)?.after as {personId?:unknown;name?:unknown}|null|undefined
+    if(after&&typeof after.personId==='string'&&typeof after.name==='string')born.set(after.personId,shortPersonName(after.name))
+  }
+  return {...base,person:id=>base.person(id)??born.get(id)}
+}
 export function eventHeadline(e:EventLogEntry,names:EventNames,typeLabel:string):string{
   const d=describeEvent(e,names)
   if(d)return d.headline
