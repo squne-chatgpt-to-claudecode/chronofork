@@ -50,6 +50,9 @@ export type SupportingMarriageSupplyOptions=Readonly<{
   maximumPreviewAge:number
   /** 既に個別化された候補または他の婚姻へ使用済みの候補ID。 */
   usedCandidateIds?:ReadonlySet<Id>
+  /** 個別化前に候補を絞る追加条件（例: 人物ペア単位の禁親証拠がある候補のみ）。
+   * 絞るだけで、審査の緩和・婚姻成立・人口加算は行わない。未指定なら従来どおり。 */
+  candidateFilter?:(candidate:SupportingMarriageCandidate)=>boolean
 }>
 export type SupportingMarriageSupplyResult=
  | Readonly<{status:'PROPOSED';candidates:readonly SupportingMarriageCandidate[];reasonCodes:readonly string[]}>
@@ -178,7 +181,6 @@ export function proposeSupportingMarriageCandidates(
       const slot=(start+i)%pool.memberCount
       const id=supportingCandidateId(pool.cohortId,slot)
       if(options.usedCandidateIds?.has(id)||world.persons.some(p=>p.personId===id))continue
-      selected++
       const candidate:SupportingMarriageCandidate={
         candidateId:id,cohortId:pool.cohortId,ordinal:slot,
         groupId:pool.groupId,affiliationHouseId:pool.affiliationHouseId,
@@ -187,6 +189,8 @@ export function proposeSupportingMarriageCandidates(
         interactionRole:'SUPPORTING',individualPersonRegistered:false,
         kinshipStatus:'UNVERIFIED',provenance:'CALIBRATION_ONLY',
       }
+      if(options.candidateFilter&&!options.candidateFilter(candidate))continue
+      selected++
       const rank=drawRandom(options.seed,{
         stream:'ENDOGENOUS',year:world.year,phase:3,ruleId:'B-001',
         actorId:seekerId,targetId:id,eventKey:'SUPPORTING_OFFER_RANK',

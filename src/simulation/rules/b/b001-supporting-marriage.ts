@@ -5,6 +5,7 @@ import type { EvaluationContext, RuleEvaluator } from '../../engine/evaluators.t
 import { EvaluationFailure } from '../../engine/evaluators.ts'
 import { proposeSupportingMarriageCandidates, validateSupportingMarriageCohorts } from '../../population/supporting-marriage.ts'
 import type { SupportingMarriageCohort } from '../../population/supporting-marriage.ts'
+import type { SupportingKinshipClearance } from '../../legal/supporting-kinship-clearance.ts'
 
 export const B001_SUPPORTING_VERSION = 'b001-supporting-registration-0:CALIBRATION_ONLY'
 export type B001SupportingInput = Readonly<{
@@ -15,6 +16,14 @@ export type B001SupportingInput = Readonly<{
   maxAliveSupporting: number
   perCohortSamples: number
   maximumPreviewAge: number
+  /**
+   * 任意。指定時は、人物ペア単位の禁親確認証拠(B-005/A-LEG-01が使う台帳と同一のもの)が当年有効な
+   * 候補だけを個別化する。証拠の無い候補を記録して予算・生存枠を使い切ること(候補枯渇)を避けるだけで、
+   * 禁親審査そのものは緩和しない(審査はB-005/A-LEG-01が従来どおり再実施)。未指定は従来動作。
+   */
+  kinshipClearances?: readonly SupportingKinshipClearance[]
+  /** 任意。kinshipClearances指定時に、1人の探索者へ同時に保持する証拠付き未婚候補の上限(1〜8)。 */
+  maxOpenCandidatesPerSeeker?: number
 }>
 export type B001SupportingFactory =
   | Readonly<{ ok: true; evaluator: RuleEvaluator }>
@@ -28,7 +37,9 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
       !validNumber(input.maxRecordsPerYear, 1, 4) ||
       !validNumber(input.maxAliveSupporting, 1, 64) ||
       !validNumber(input.perCohortSamples, 1, 16) ||
-      !validNumber(input.maximumPreviewAge, 18, 100))
+      !validNumber(input.maximumPreviewAge, 18, 100) ||
+      (input.maxOpenCandidatesPerSeeker !== undefined && !validNumber(input.maxOpenCandidatesPerSeeker, 1, 8)) ||
+      (input.kinshipClearances !== undefined && !Array.isArray(input.kinshipClearances)))
     return {ok:false,issues:['INVALID_SUPPORTING_REGISTRATION_CALIBRATION']}
   const cohorts = structuredClone(input.cohorts) as SupportingMarriageCohort[]
   const settings = Object.freeze({
@@ -36,7 +47,17 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
     maxAliveSupporting: input.maxAliveSupporting,
     perCohortSamples: input.perCohortSamples,
     maximumPreviewAge: input.maximumPreviewAge,
+    maxOpenCandidatesPerSeeker: input.maxOpenCandidatesPerSeeker,
   })
+  const clearanceByPair = new Map<string, SupportingKinshipClearance[]>()
+  for (const c of structuredClone(input.kinshipClearances ?? []) as SupportingKinshipClearance[]) {
+    const k = JSON.stringify(c.personIds)
+    clearanceByPair.set(k, [...(clearanceByPair.get(k) ?? []), c])
+  }
+  const evidenceBacked = input.kinshipClearances !== undefined
+  const cleared = (a: Id, b: Id, year: number): boolean =>
+    (clearanceByPair.get(JSON.stringify(cmp(a, b) <= 0 ? [a, b] : [b, a])) ?? [])
+      .some(c => c.checkedYear <= year && year < c.validUntilYear)
   const evaluator: RuleEvaluator = (world: WorldState, ctx: EvaluationContext): RuleOutcome => {
     if (ctx.ruleId !== 'B-001' || ctx.phase !== 3 || ctx.year !== world.year) {
       throw new EvaluationFailure('B-001補助人物記録は当年フェーズ3に限ります',[
@@ -75,7 +96,16 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
         defer(seeker.personId,'SUPPORTING_RECORD_BUDGET_EXCEEDED')
         break
       }
+      if (evidenceBacked && settings.maxOpenCandidatesPerSeeker !== undefined) {
+        const open = world.persons.filter(p => p.alive && p.interactionRole === 'SUPPORTING' &&
+          !married.has(p.personId) && p.sex !== seeker.sex && cleared(seeker.personId, p.personId, ctx.year)).length
+        if (open >= settings.maxOpenCandidatesPerSeeker) {
+          defer(seeker.personId, 'OPEN_EVIDENCE_BACKED_CANDIDATES_AT_LIMIT')
+          continue
+        }
+      }
       const supplied = proposeSupportingMarriageCandidates(world, seeker.personId, eligibleCohorts, {
+        ...(evidenceBacked ? { candidateFilter: (c: { candidateId: Id }) => cleared(seeker.personId, c.candidateId, ctx.year) } : {}),
         seed: ctx.seed,
         maxCandidates: 1,
         perCohortSamples: settings.perCohortSamples,
