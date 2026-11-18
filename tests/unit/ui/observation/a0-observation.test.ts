@@ -9,9 +9,9 @@ import type { WorkerLike } from '../../../../src/ui/play-runner.ts'
 const fakeRun={
   inputs:{seed:20260101},
   result:{status:'COMPLETED',goal:null,technicalGoal:null,
-    snapshots:[{year:1250,persons:[],titles:[]},{year:1251,persons:[],titles:[]}],
-    eventLog:[{eventId:'e',year:1250,eventType:'PERSON_BIRTH'}],
-    decisionTraces:[{traceId:'t',year:1250,status:'DEFER',ruleId:'B-005',eventIds:[]}],
+    snapshots:[{year:1250,persons:[],titles:[],legal:{marriages:[]}},{year:1251,persons:[],titles:[],legal:{marriages:[]}}],
+    eventLog:[{eventId:'e',year:1250,eventType:'PERSON_BIRTH',stateChanges:[],involvedRefs:[]}],
+    decisionTraces:[{traceId:'t',year:1250,status:'DEFER',ruleId:'B-005',eventIds:[],candidates:[],reasonCodes:[],actorRef:{kind:'PERSON',id:'p'}}],
   },
 } as unknown as TimelineRun
 
@@ -27,6 +27,8 @@ describe('統合原史A0の年次観測',()=>{
     expect(v?.counts[1]).toEqual({year:1251,events:0,traces:0,focusEvents:0})
     expect(v?.goal).toBeNull()
     expect(v?.titleHistories).toEqual([])
+    expect(v?.personRecords).toEqual([])
+    expect(v?.titleLossRecords).toEqual([])
     expect(v?.knownA0Ending).toBeNull()
     expect(sliceA0Observation(fakeRun,1252,'INTEGRATED_EXPERIMENTAL','REUSED')).toBeUndefined()
   })

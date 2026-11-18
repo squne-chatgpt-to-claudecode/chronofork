@@ -5,6 +5,7 @@ import type { ObservationSlice } from '../../../../src/ui/branch-play-source.ts'
 import { createExperimentalIntegratedWorld } from '../../../../src/scenario/experimental/index.ts'
 import { buildA0KnownEnding } from '../../../../src/ui/observation/a0-known-ending.ts'
 import { buildTitleHoldingHistories } from '../../../../src/ui/observation/title-history.ts'
+import { buildPersonRecords } from '../../../../src/ui/observation/person-record.ts'
 import { A0FutureContext } from '../../../../src/ui/observation/A0FutureContext.tsx'
 afterEach(cleanup)
 const initial=createExperimentalIntegratedWorld()
@@ -16,7 +17,7 @@ const final={
 const view:ObservationSlice={
   seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',year:1250,world:initial,
   events:[],traces:[],counts:[],candidates:{seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',candidates:[]},
-  titleHistories:buildTitleHoldingHistories([initial,final],[]),
+  titleHistories:buildTitleHoldingHistories([initial,final],[]),personRecords:buildPersonRecords([initial,final],[],[],buildTitleHoldingHistories([initial,final],[])),titleLossRecords:[],
   knownA0Ending:buildA0KnownEnding(initial,final),
   technicalGoal:null,goal:null,status:'COMPLETED',a0Source:'COMPUTED',
 }

@@ -148,7 +148,7 @@ export function FamilyTree({ world, personId, onSelectPerson, onSelectTitle }: F
         {(father.kind === 'PERSON' || mother.kind === 'PERSON') && <div className="ft-link" aria-hidden="true" />}
         <Group label="本人と配偶者" testId="family-self-row">
           <li>
-            <span className="ft-node ft-self" aria-current="true" data-testid={`family-node-${self.personId}`}>
+            <span className={`ft-node ft-self${self.life.kind === 'DEAD' ? ' ft-dead' : ''}`} aria-current="true" data-testid={`family-node-${self.personId}`}>
               <span className="ft-role">選択中</span>
               <span className="ft-name">{displayPersonName(self.name)}</span>
               <span className="ft-sub">
@@ -181,7 +181,7 @@ export function FamilyTree({ world, personId, onSelectPerson, onSelectTitle }: F
       </div>
 
       <dl className="ft-facts" data-testid="family-affiliation">
-        <dt>家門</dt>
+        <dt>実家門</dt>
         <dd data-testid="family-house">
           {affiliation.house.status === 'CONFIRMED' ? affiliation.house.name : `確認できない（ID: ${affiliation.house.houseId}）`}
         </dd>
@@ -195,7 +195,7 @@ export function FamilyTree({ world, personId, onSelectPerson, onSelectTitle }: F
             </dd>
           </>
         )}
-        <dt>記録上のTitle保持</dt>
+        <dt>{model.year}年初の称号（記録上の保持）</dt>
         <dd>
           {titles.length === 0 ? (
             <span data-testid="family-no-title">この年に保持が確認できるTitleはない</span>

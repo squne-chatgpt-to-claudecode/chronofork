@@ -27,7 +27,7 @@ describe('DEC-106: 逆算調査に供する証拠の決定論的な契約',()=>{
       stateChanges:[{path:'$.titles['+crown.titleId+'].holder.personId',before:'old',after:'new'}],
     } as unknown as EventLogEntry
     const result=buildTitleHoldingHistories([original],[transfer])
-    expect(result.find(h=>h.titleId===crown.titleId)?.transfers).toEqual([{year:1250,eventId:'ev-title'}])
+    expect(result.find(h=>h.titleId===crown.titleId)?.transfers).toMatchObject([{year:1250,eventId:'ev-title'}])
     expect(result.find(h=>h.titleId===territory.titleId)?.transfers).toEqual([])
     expect(result.find(h=>h.titleId===crown.titleId)?.kind).toBe('CROWN')
     expect(result.find(h=>h.titleId===territory.titleId)?.kind).toBe('TERRITORIAL')
@@ -47,6 +47,6 @@ describe('DEC-106: 逆算調査に供する証拠の決定論的な契約',()=>{
     } as unknown as EventLogEntry
     const history=buildTitleHoldingHistories([original,after],[event]).find(h=>h.titleId===crown.titleId)!
     expect(history.intervals[1]!.fromYear).toBe(event.year+1)
-    expect(history.transfers).toEqual([{year:event.year,eventId:event.eventId}])
+    expect(history.transfers).toMatchObject([{year:event.year,eventId:event.eventId}])
   })
 })

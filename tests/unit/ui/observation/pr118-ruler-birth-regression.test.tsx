@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 // PR #118 / A+B+C統合: Eventの確定stateChangeと年初WorldStateを混同しない。
+import { buildPersonRecords } from '../../../../src/ui/observation/person-record.ts'
 import {cleanup,fireEvent,render,screen} from '@testing-library/react'
 import {afterEach,expect,it,vi} from 'vitest'
 import {createExperimentalIntegratedWorld} from '../../../../src/scenario/experimental/index.ts'
@@ -64,7 +65,7 @@ it('出生Eventの新生児は同年年初に捏造せず、翌年初の実World
     seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',year:1250,world,
     events:[birth],traces:[],counts:[],
     candidates:{seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',candidates:[]},
-    titleHistories:[],knownA0Ending:null,technicalGoal:null,goal:null,
+    titleHistories:[],personRecords:buildPersonRecords([world],[birth],[],[]),titleLossRecords:[],knownA0Ending:null,technicalGoal:null,goal:null,
     status:'COMPLETED',a0Source:'COMPUTED',
   }
   const onLoad=vi.fn()
@@ -96,7 +97,7 @@ it('人物Refのみで出生stateChangeのないEventには翌年導線を作ら
     seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',year:1250,world,
     events:[withoutProof],traces:[],counts:[],
     candidates:{seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',candidates:[]},
-    titleHistories:[],knownA0Ending:null,technicalGoal:null,goal:null,
+    titleHistories:[],personRecords:buildPersonRecords([world],[],[],[]),titleLossRecords:[],knownA0Ending:null,technicalGoal:null,goal:null,
     status:'COMPLETED',a0Source:'COMPUTED',
   }
   render(<ObservationPanel observation={view} seedText="20260101"

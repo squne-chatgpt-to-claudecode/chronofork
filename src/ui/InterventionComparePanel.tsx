@@ -54,7 +54,7 @@ type Props=Readonly<{
   onFetchCandidates:(seed:number,mode:PlayMode)=>void
   onCancelCandidates:()=>void
   /** 年表調査から選択した年と人物。既存の合法な介入対象判定に委ねる。 */
-  observationTarget?:Readonly<{year:number;personId:string;seed:number;token:number}>
+  observationTarget?:Readonly<{year:number;personId:string;secondPersonId?:string;seed:number;token:number}>
   activeBranch:BranchChoice|'A2'
   onRun:(input:PlayInput)=>void
   onViewBranch:(choice:BranchChoice|'A2')=>void
@@ -115,7 +115,7 @@ export function InterventionComparePanel(p:Props){
   const [yearText,setYearText]=useState(String(observed?.year??PLAY_DEMO_YEAR))
   const [firstId,setFirstId]=useState<string>(observed?.personId??PLAY_DEMO_PAIR[0])
   const [secondId,setSecondId]=useState<string>(observed
-    ? observed.personId===INTEGRATED_PLAY_DEFAULTS.pair[1]?INTEGRATED_PLAY_DEFAULTS.pair[0]:INTEGRATED_PLAY_DEFAULTS.pair[1]
+    ? observed.secondPersonId??(observed.personId===INTEGRATED_PLAY_DEFAULTS.pair[1]?INTEGRATED_PLAY_DEFAULTS.pair[0]:INTEGRATED_PLAY_DEFAULTS.pair[1])
     : PLAY_DEMO_PAIR[1])
   const [deltaText,setDeltaText]=useState(String(observed?INTEGRATED_PLAY_DEFAULTS.signedDelta:PLAY_DEMO_DELTA))
   const [durationText,setDurationText]=useState(String(observed

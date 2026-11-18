@@ -83,3 +83,20 @@
 .obs-a0-future-titles li{margin:0.3rem 0;line-height:1.5;overflow-wrap:anywhere;}
 @media(max-width:650px){.obs-a0-future-grid{grid-template-columns:1fr;}}
 .obs-technical{margin-top:0.7rem;} .obs-technical>summary{cursor:pointer;font-weight:600;}
+
+/* 調査/世界の閲覧タブ、選択年の状態と全期間の履歴の分離、喪失記録。 */
+.obs-tabs {margin-top:0.2rem;}
+.obs-person-year,.obs-history {border:1px solid var(--line);border-radius:5px;padding:0.55rem;margin:0.55rem 0;min-width:0;}
+.obs-person-year h4,.obs-history h4 {margin:0 0 0.3rem;}
+.obs-history {background:#fbfaf3;border-color:#d9d2a8;}
+.obs-history-facts {display:grid;grid-template-columns:max-content minmax(0,1fr);gap:0.25rem 0.7rem;margin:0.4rem 0;}
+.obs-history-facts dt {font-weight:600;}
+.obs-history-facts dd {margin:0;overflow-wrap:anywhere;}
+.obs-history-facts ul,.obs-history ul {margin:0;padding-left:1.1rem;}
+.obs-history button,.obs-loss button {margin:0.1rem 0.25rem 0.1rem 0;padding:0.15rem 0.4rem;border:1px solid var(--line);background:#fff;border-radius:4px;cursor:pointer;}
+.obs-history-partner {border-top:1px dashed var(--line);padding-top:0.3rem;margin-top:0.4rem;}
+.obs-history-partner h6 {margin:0 0 0.2rem;font-size:0.95rem;}
+.obs-loss {margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid #b6d4f0;}
+.obs-loss h4 {margin:0 0 0.2rem;}
+[hidden]{display:none !important;}
+@media(max-width:700px){.obs-history-facts{grid-template-columns:1fr;}}

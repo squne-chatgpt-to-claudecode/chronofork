@@ -45,6 +45,6 @@ describe('Titleの歴代保持者記録',()=>{
     const unrelated={...transfer,eventId:'e-unrelated',stateChanges:[
       {path:'$.titles[title-exp-west].holder.personId',before:'a',after:'b'}]} as EventLogEntry
     const h=buildTitleHoldingHistories([initial],[transfer,unrelated]).find(x=>x.titleId===territorial.titleId)!
-    expect(h.transfers).toEqual([{year:1250,eventId:'e-title'}])
+    expect(h.transfers).toMatchObject([{year:1250,eventId:'e-title',beforeHolderId:'person-exp-01',afterHolderId:'person-exp-02'}])
   })
 })

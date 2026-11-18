@@ -5,6 +5,13 @@ import type { ObservationSlice } from '../branch-play-source.ts'
 import type { PlayProgress } from '../play-progress.ts'
 import { associationsFor, collectAssociations } from './associations.ts'
 import { FamilyTree } from './FamilyTree.tsx'
+import { PersonHistory } from './PersonHistory.tsx'
+import { personDisplayNames } from './person-display.ts'
+import { reasonSentence, reasonView } from './reason-labels.ts'
+import { Inspector } from '../Inspector.tsx'
+import { RegionMap } from '../RegionMap.tsx'
+import { indexWorld } from '../inspection-source.ts'
+import type { EntityKind, InspectionSource, Selection } from '../inspection-source.ts'
 import { eventHeadline, namesOfYear, EVENT_CATEGORIES, inCategory, isObservationFocusEvent } from '../integrated-overview.ts'
 import { describeEvent, shortPersonName, unresolvedLabel } from '../event-summary.ts'
 import type { EventLogEntry, DecisionTrace, Id } from '../../simulation/contracts/index.ts'
@@ -21,7 +28,7 @@ type Props = Readonly<{
   onReset:()=>void
   onLoad:(year:number)=>void
   onCancel:()=>void
-  onIntervene:(year:number,personId:string)=>void
+  onIntervene:(year:number,personId:string,secondPersonId?:string)=>void
 }>
 
 const EVENT_LABELS:Readonly<Record<string,string>>={
@@ -65,10 +72,25 @@ export function ObservationPanel(p:Props){
   const [traceOpen,setTraceOpen]=useState(false)
   const [showAllEvents,setShowAllEvents]=useState(false)
   const [yearHintLimit,setYearHintLimit]=useState(8)
+  // 調査（年表・人物・称号）と世界の閲覧（地図・人口集団・人物・称号）は同じA0・年・調査対象を共有する。
+  const [mainTab,setMainTab]=useState<'investigate'|'world'>('investigate')
+  const [invTab,setInvTab]=useState<EntityKind>('region')
+  const [invSelection,setInvSelection]=useState<Selection|undefined>(undefined)
+  // 別の年の記録を開くとき、その年の観測が届いてから対象のEvent/Traceを選ぶ。
+  const [pendingOpen,setPendingOpen]=useState<{kind:'event'|'trace';id:string;year:number}|undefined>(undefined)
   const [scrubYear,setScrubYear]=useState<number|null>(null) // ドラッグ中のみ表示を更新する
   const persons=useMemo(()=>v?.world.persons.filter(x=>x.birthYear<=v.year)??[],[v])
-  const person=persons.some(x=>x.personId===selectedPerson)?selectedPerson:
+  const records=useMemo(()=>v?.personRecords??[],[v])
+  // 選択人物は、選択年に未出生でも別人へ切り替えない（記録にある人物ならそのまま保持する）。
+  const person=records.some(x=>x.personId===selectedPerson)||persons.some(x=>x.personId===selectedPerson)?selectedPerson:
     (persons.find(x=>x.interactionRole!=='SUPPORTING')??persons[0])?.personId??''
+  const nameOf=useMemo(()=>personDisplayNames(records),[records])
+  const personName=(id:string)=>nameOf(id)??unresolvedLabel('person',id)
+  /** 画面表示用の複製。シミュレーション状態は変えず、仮名の表示だけを統一する。 */
+  const displayWorld=useMemo(()=>v?{...v.world,persons:v.world.persons.map(x=>({...x,name:nameOf(x.personId)??x.name}))}:undefined,[v,nameOf])
+  const inspSource:InspectionSource|undefined=v&&displayWorld?{
+    label:'原史A0 seed '+v.seed,world:displayWorld,experimental:true,events:v.events,traces:v.traces}:undefined
+  const inspIndex=useMemo(()=>displayWorld?indexWorld(displayWorld):undefined,[displayWorld])
   const associations=useMemo(()=>v?collectAssociations({
     year:v.year,events:v.events,traces:v.traces,snapshot:v.world,
   }):undefined,[v])
@@ -76,7 +98,13 @@ export function ObservationPanel(p:Props){
     [associations,person])
   const eventRefs=new Set(refs.filter(x=>x.source.type==='EVENT').map(x=>(x.source as {eventId:string}).eventId))
   const traceRefs=new Set(refs.filter(x=>x.source.type==='TRACE').map(x=>(x.source as {traceId:string}).traceId))
-  const names=useMemo(()=>namesOfYear(v?.world,v?.events??[]),[v])
+  const names=useMemo(()=>{
+    const base=namesOfYear(v?.world,v?.events??[])
+    const w=v?.world
+    return {...base,person:(id:string)=>nameOf(id)??base.person(id),
+      title:(id:string)=>{const t=w?.titles.find(x=>x.titleId===id);return t&&w?titleLabel(t,w):undefined},
+      region:(id:string)=>w?.regions.find(r=>r.regionId===id)?.name}
+  },[v,nameOf])
   const eventKind=(e:EventLogEntry)=>EVENT_CATEGORIES.find(c=>inCategory(e,c))?.label??labelOf(e.eventType)
   const readableEvent=(e:EventLogEntry)=>eventHeadline(e,names,eventKind(e))
   const isPeopleTitleEvent=(e:EventLogEntry)=>isObservationFocusEvent(e)
@@ -132,9 +160,42 @@ export function ObservationPanel(p:Props){
   const territorialAssessments=assessments.filter(a=>v?.world.titles.find(t=>t.titleId===a.titleId)?.kind==='TERRITORIAL')
   const yearChange=(y:number)=>{
     setScrubYear(null)
+    setPendingOpen(undefined)
     setEventId('');setTraceId('');setEventType('ALL');setRelatedOnly(false)
     setEventLimit(SHOW);setTraceLimit(SHOW)
     if(y!==v?.year)p.onLoad(y)
+  }
+  const selectIns=(sel:Selection)=>{
+    setInvTab(sel.kind);setInvSelection(sel)
+    if(sel.kind==='person'&&records.some(r=>r.personId===sel.id))setSelectedPerson(sel.id)
+    if(sel.kind==='title')setSelectedTitle(sel.id)
+  }
+  const changeInvTab=(k:EntityKind)=>{if(k!==invTab){setInvTab(k);setInvSelection(undefined)}}
+  const inspSel:Selection|undefined=invSelection??(invTab==='person'&&person?{kind:'person',id:person}:undefined)
+  /** 年・人物・調査対象を保ったまま、別の年の記録を開く。年の観測が届いてから対象を選ぶ。 */
+  const openRecord=(kind:'event'|'trace',id:string,year:number)=>{
+    setMainTab('investigate')
+    if(v&&v.year===year){applyOpen(kind,id);return}
+    yearChange(year)
+    setPendingOpen({kind,id,year})
+  }
+  const applyOpen=(kind:'event'|'trace',id:string)=>{
+    if(kind==='event'){setEventId(id);setTraceId('');setEventType('ALL');setShowAllEvents(true);setRelatedOnly(false)}
+    else{setTraceId(id);setTraceOpen(true);setEventId('');setTraceFilter('ALL');setRelatedOnly(false)}
+  }
+  // 対象年の観測が届いたら、その年の対象を選ぶ（レンダー中の状態調整）。失敗時は保留を捨てる。
+  if(pendingOpen&&v?.year===pendingOpen.year){
+    setPendingOpen(undefined)
+    applyOpen(pendingOpen.kind,pendingOpen.id)
+  }
+  /** 人物と、その人物が記録に現れる年を一緒に選ぶ。未出生の年のまま別人へ切り替えない。 */
+  const focusPerson=(personId:string,year:number)=>{
+    setSelectedPerson(personId);setMainTab('investigate')
+    if(v&&year!==v.year)yearChange(year)
+  }
+  const selectTitleAt=(titleId:string,year:number)=>{
+    setSelectedTitle(titleId);setMainTab('investigate')
+    if(v&&year!==v.year)yearChange(year)
   }
   return <section className="panel obs" aria-labelledby="obs-heading" data-testid="observation-main">
     <header className="obs-head">
@@ -174,7 +235,7 @@ export function ObservationPanel(p:Props){
     {p.loading&&<div role="status" data-testid="obs-loading">
       <p>原史A0の確定データを取得中です。計算が完了するまで未来の結果を表示しません。</p>
       {p.progress&&<p data-testid="obs-progress">{p.progress.confirmedYear}年初まで計算済み（A0 {p.progress.transitionsDone}/{p.progress.transitionsTotal}年分）。</p>}
-      <button type="button" onClick={p.onCancel} data-testid="obs-cancel">観測の取得を中止</button>
+      <button type="button" onClick={()=>{setPendingOpen(undefined);p.onCancel()}} data-testid="obs-cancel">観測の取得を中止</button>
     </div>}
     {p.error&&<p role="alert" data-testid="obs-error">観測に失敗しました（{p.error.code}）。{p.error.message}</p>}
     {v&&<div className="obs-body">
@@ -192,10 +253,34 @@ export function ObservationPanel(p:Props){
             <strong>{(()=>{const t=v.world.titles.find(x=>x.titleId===a.titleId);
               return t?titleLabel(t,v.world):'名前未確認の称号'})()}</strong>：
               {a.qualifies?'条件を満たしている（参考判定）':'不足している条件：'+reason(a.failures)}
+            {(()=>{
+              const loss=v.titleLossRecords.find(l=>l.titleId===a.titleId)
+              if(loss)return <div className="obs-related-links" data-testid="obs-loss-link">
+                <button type="button" disabled={p.loading||!seedMatches}
+                  onClick={()=>loss.transferEventId&&loss.transferYear!==undefined?openRecord('event',loss.transferEventId,loss.transferYear):yearChange(loss.lostFromYear)}>
+                  最後に保持者を失った記録を開く（{loss.transferYear??loss.lostFromYear}年）</button></div>
+              return a.failures.includes('HOLDER_UNDETERMINED')&&!v.titleHistories.find(h=>h.titleId===a.titleId)?.intervals.some(i=>i.holder.status==='HELD')?<p className="note" data-testid="obs-no-loss">
+                この称号は、観測期間に保持者が確認できた年初の記録がありません（最初から未確定）。喪失ではありません。</p>:null
+            })()}
             <details className="dev-details"><summary>技術詳細</summary>
               <span className="note">titleId {a.titleId} / 理由コード {reasonCodes(a.failures)}</span></details>
           </li>)}</ul>
         </details>}
+        {v.titleLossRecords.length>0&&<section className="obs-loss" data-testid="obs-loss-records">
+          <h4>保持者を失った称号の記録</h4>
+          <p className="note">1350年初に保持者を確認できない称号のうち、以前は保持者がいた称号について、最後に保持者を確認できなくなった年を年初履歴から示します。
+            原因は断定せず、該当年のEvent・判断の記録で確認します。</p>
+          <ul>{v.titleLossRecords.map(l=><li key={l.titleId}>
+            <strong>{l.label}</strong>：最後の保持者は{personName(l.lastHolderId)}（{l.heldFromYear}年初〜）。
+            {l.lostFromYear}年初に保持者を確認できなくなった
+            {l.lastHolderDeathYear!==undefined?'（この人物の没年は'+l.lastHolderDeathYear+'年）':''}。
+            <span className="obs-related-links">
+              <button type="button" disabled={p.loading||!seedMatches} data-testid="obs-loss-person"
+                onClick={()=>focusPerson(l.lastHolderId,l.transferYear??l.lostFromYear-1)}>{personName(l.lastHolderId)}の履歴を見る</button>
+              {l.transferEventId&&l.transferYear!==undefined&&<button type="button" disabled={p.loading||!seedMatches}
+                onClick={()=>openRecord('event',l.transferEventId!,l.transferYear!)}>{l.transferYear}年の称号移転の記録を開く</button>}
+            </span></li>)}</ul>
+        </section>}
         {goal?.status==='INVALID_INPUT'&&<p>計算結果の技術評価はデータ不正のため成立していません。</p>}
       </div>
       <div className="obs-year-nav">
@@ -239,7 +324,27 @@ export function ObservationPanel(p:Props){
           </div>
         </details>
       </div>
-      <div className="obs-two-col">
+      <div role="tablist" aria-label="調査と世界の閲覧" className="tabs obs-tabs" data-testid="obs-main-tabs">
+        <button type="button" role="tab" id="obs-tab-investigate" aria-selected={mainTab==='investigate'} aria-controls="obs-panel-investigate"
+          data-testid="obs-tab-investigate" onClick={()=>setMainTab('investigate')}>調査（年表・人物・称号）</button>
+        <button type="button" role="tab" id="obs-tab-world" aria-selected={mainTab==='world'} aria-controls="obs-panel-world"
+          data-testid="obs-tab-world" onClick={()=>setMainTab('world')}>世界の閲覧（地図・人口集団・人物・称号）</button>
+      </div>
+      <p className="note" data-testid="obs-context-line">調査中：原史A0 seed {v.seed}・{v.year}年初
+        {person?'・'+personName(person):''}{title?'・'+titleLabel(title,v.world):''}。タブを切り替えても同じ原史・年・対象を保ちます。</p>
+      <div role="tabpanel" id="obs-panel-world" aria-labelledby="obs-tab-world" hidden={mainTab!=='world'} data-testid="obs-world-explorer">
+        {mainTab==='world'&&inspSource&&inspIndex&&<>
+          <p className="note">観測中の原史A0（seed {v.seed}）の{v.year}年初の世界です。旧試験計算のデータは混ざりません。年は上の年表で変更します。</p>
+          <div className="world-row">
+            <RegionMap source={inspSource} index={inspIndex} selectedRegionId={inspSel?.kind==='region'?inspSel.id:undefined}
+              onSelect={id=>selectIns({kind:'region',id})}/>
+            <Inspector source={inspSource} index={inspIndex} tab={invTab} selection={inspSel} onTab={changeInvTab} onSelect={selectIns}/>
+          </div>
+          {inspSel?.kind==='person'&&records.some(r=>r.personId===inspSel.id)&&<button type="button" data-testid="obs-world-to-person"
+            onClick={()=>{setSelectedPerson(inspSel.id);setMainTab('investigate')}}>この人物のこの世界線の履歴を調査欄で見る</button>}
+        </>}
+      </div>
+      <div className="obs-two-col" role="tabpanel" id="obs-panel-investigate" aria-labelledby="obs-tab-investigate" hidden={mainTab!=='investigate'}>
         <div className="obs-timeline">
           <h3>年表・{v.year}年に記録された出来事</h3>
           <p className="note">最初は婚姻・出生・死亡・王朝帰属・土地Titleなどを示します。人口や補助人物の登録を含む全Eventも下から表示できます。</p>
@@ -272,9 +377,11 @@ export function ObservationPanel(p:Props){
             <h4>{readableEvent(chosenEvent)}</h4>
             {describeEvent(chosenEvent,names)?.lines.map(line=><p key={line}>{line}</p>)}
             <p>実際の状態変化 {chosenEvent.stateChanges.length}件。関係する人物と記録上の判断だけを辿れます。</p>
+            {describeEvent(chosenEvent,names)===undefined&&<p className="missing" data-testid="obs-event-unexplained">
+              この種類の出来事は、通常表示ではまだ内容を読み替えていません。実際の状態差分は下の検証用表示にあります。</p>}
             {evidencePersons.length>0&&<div className="obs-related-links" data-testid="obs-event-people">
               {evidencePersons.map(id=><button type="button" key={id} onClick={()=>setSelectedPerson(id)}>
-                {shortPersonName(persons.find(x=>x.personId===id)!.name)}の家系を見る
+                {personName(id)}の家系を見る
               </button>)}
             </div>}
             {newbornIds.length>0&&newbornNextYear!==null&&<div className="obs-related-links" data-testid="obs-event-newborns">
@@ -292,6 +399,7 @@ export function ObservationPanel(p:Props){
                   const t=v.traces.find(x=>x.traceId===id)
                   return <p key={id}>{t
                     ?<><strong>{statusText(t.status)}</strong> — {traceActor(t)}／判断規則 {t.ruleId}
+                      <span data-testid="obs-trace-reason">（{reasonSentence(t.reasonCodes)}）</span>
                       <button type="button" onClick={()=>{setTraceId(id);setTraceOpen(true);setTraceFilter('ALL')}}>根拠を詳しく見る</button></>
                     :<>参照された判断の詳細は、この年の表示にはありません<span hidden data-trace-id={id}/></>}</p>
                 })}
@@ -322,7 +430,8 @@ export function ObservationPanel(p:Props){
           {traces.length>traceLimit&&<button type="button" onClick={()=>setTraceLimit(n=>n+SHOW)}>Traceをさらに表示</button>}
           {chosenTrace&&<div className="obs-record-detail" data-testid="obs-trace-detail">
             <h4>{traceActor(chosenTrace)}についての判断：{statusText(chosenTrace.status)}</h4>
-            <p>規則 {chosenTrace.ruleId}（{chosenTrace.status}）。記録された理由コード：{reasonCodes(chosenTrace.reasonCodes)}</p>
+            <p>規則 {chosenTrace.ruleId}（{chosenTrace.status}）。記録された理由：{reasonSentence(chosenTrace.reasonCodes)}</p>
+            <p className="note">理由コード：{reasonCodes(chosenTrace.reasonCodes)}{reasonView(chosenTrace.reasonCodes).unclassified.length>0?'（未分類のコードを含みます）':''}</p>
             <p>実際に関連づくEvent：{chosenTrace.eventIds.length}件。記録されていない事件は補いません。</p>
             <div className="obs-related-links">{chosenTrace.eventIds.map(id=><button type="button" key={id}
               onClick={()=>{setEventId(id);setEventType('ALL')}}>関連Eventを開く</button>)}</div>
@@ -331,21 +440,32 @@ export function ObservationPanel(p:Props){
           </details>
         </div>
         <aside className="obs-person">
-          <h3>この年の人物・法的関係</h3>
+          <h3>人物と称号を調べる</h3>
           <label>調べる人物
             <select data-testid="obs-person" value={person} onChange={e=>{setSelectedPerson(e.target.value);setSelectedTitle('')}}>
-              {persons.map(x=><option value={x.personId} key={x.personId}>{shortPersonName(x.name)}（{x.birthYear}年生）</option>)}
+              {records.map(x=><option value={x.personId} key={x.personId}>
+                {personName(x.personId)}（{x.birthYear}年生{x.deathYear===undefined?'':'・'+x.deathYear+'年没'}）{x.birthYear>v.year||x.firstYear>v.year?'・この年初には未出生/未記録':''}</option>)}
+              {persons.filter(x=>!records.some(r=>r.personId===x.personId)).map(x=>
+                <option value={x.personId} key={x.personId}>{shortPersonName(x.name)}（{x.birthYear}年生）</option>)}
             </select>
           </label>
-          {person&&seedMatches&&<A0FutureContext observation={v} personId={person}
-            disabled={p.loading} onYearSelect={yearChange} onTitleSelect={setSelectedTitle}/>}
-          {person&&<FamilyTree world={v.world} personId={person} onSelectPerson={setSelectedPerson} onSelectTitle={setSelectedTitle}/>}
-          <details className="obs-family-help">
-            <summary>子どもの数・配偶者の表示の意味</summary>
-            <p>子はこの年初までに確認できる親子関係（死亡した子も含む）です。</p>
-            <p>配偶者はこの年に有効（ACTIVE）な婚姻だけを表示しています。「記録なし」は生涯未婚を意味しません。</p>
-            <p>出生は婚姻・両親の年齢・出生枠・CALIBRATION_ONLYの抽選に基づきます。実際の成立・不成立はその年のB-002 DecisionTraceで確認できます。</p>
-          </details>
+          <section className="obs-person-year" data-testid="obs-person-year-state">
+            <h4>選択年初の状態（{v.year}年初）</h4>
+            <p className="note">この年の年初に記録されている関係です。別の年の関係や、この世界線の全期間の履歴は下の別欄にあります。</p>
+            {person&&seedMatches&&<A0FutureContext observation={v} personId={person}
+              disabled={p.loading} onYearSelect={yearChange} onTitleSelect={setSelectedTitle}/>}
+            {person&&displayWorld&&<FamilyTree world={displayWorld} personId={person} onSelectPerson={id=>focusPerson(id,v.year)} onSelectTitle={setSelectedTitle}/>}
+            <details className="obs-family-help">
+              <summary>子どもの数・配偶者の表示の意味</summary>
+              <p>子はこの年初までに確認できる親子関係（死亡した子も含む）です。</p>
+              <p>配偶者はこの年に有効（ACTIVE）な婚姻だけを表示しています。「記録なし」は生涯未婚を意味しません。生涯の婚姻歴は下の「この世界線の観測期間内の履歴」にあります。</p>
+              <p>出生は婚姻・両親の年齢・出生枠・CALIBRATION_ONLYの抽選に基づきます。実際の成立・不成立はその年のB-002 DecisionTraceで確認できます。</p>
+            </details>
+          </section>
+          {person&&<PersonHistory records={records} personId={person} currentYear={v.year} nameOf={nameOf}
+            disabled={p.loading||!seedMatches} onFocusPerson={focusPerson} onOpenEvent={(id,y)=>openRecord('event',id,y)}
+            onOpenTrace={(id,y)=>openRecord('trace',id,y)} onYear={yearChange} onSelectTitle={selectTitleAt}
+            {...(seedMatches?{onIntervene:(y:number,a:string,b:string)=>p.onIntervene(y,a,b)}:{})}/>}
           <label>称号の歴代保持者を調べる（王位・領地別）
             <select data-testid="obs-title-select" value={title?.titleId??''} onChange={e=>setSelectedTitle(e.target.value)}>
               <option value="">選択してください</option>
@@ -360,11 +480,12 @@ export function ObservationPanel(p:Props){
             <p>保持と合法的な王朝存続判定は別の条件です。上段の1350年技術判定と、以下の選択年の実記録を区別してください。</p>
             {titleHistory&&<section className="obs-holder-history" data-testid="obs-title-history">
               <h5>歴代の保持者（年初の実記録）</h5>
-              <p className="note">各年の年初に確認された保持状況です。正式な継承の成立や移転理由を推定しません。</p>
+              <p className="note">各年の年初に確認された保持状況です。正式な継承の成立や移転理由を推定しません。保持者名を選ぶと、その人物とその年を一緒に開きます。</p>
               <ol>{titleHistory.intervals.map((period,i)=><li key={period.fromYear+'-'+i}>
                 <strong>{period.fromYear}{period.throughYear>period.fromYear?'〜'+period.throughYear:''}年初：</strong>
                 {period.holder.status==='HELD'
-                  ?<span>{shortPersonName(period.holder.personName)}（{period.holder.life==='DEAD'
+                  ?<span><button type="button" data-testid={'obs-holder-person-'+period.fromYear} disabled={p.loading||!seedMatches}
+                    onClick={()=>focusPerson((period.holder as {personId:string}).personId,period.fromYear)}>{personName(period.holder.personId)}</button>（{period.holder.life==='DEAD'
                     ?'故人の名義が残る・継承未確認'+(period.holder.deathYear===undefined?'':'／'+period.holder.deathYear+'年没')
                     :period.holder.life==='UNKNOWN'?'人物の生死を確認できない':'記録上の保持者'}）</span>
                   :period.holder.status==='UNDETERMINED'?'保持者未確定（相続等は別途確認）':'当年初の称号記録なし'}
@@ -374,9 +495,10 @@ export function ObservationPanel(p:Props){
               <details>
                 <summary>実際に記録されたTitle移転Event（{titleHistory.transfers.length}件）</summary>
                 {titleHistory.transfers.length===0?<p>確定した移転Eventを確認できません。保持者変化を正式継承とはみなしません。</p>:
-                  <ul>{titleHistory.transfers.map(e=><li key={e.eventId}>{e.year}年
-                    <button type="button" disabled={p.loading||!seedMatches} onClick={()=>yearChange(e.year)}>
-                      Eventが起きた年を調べる
+                  <ul>{titleHistory.transfers.map(e=><li key={e.eventId}>{e.year}年：
+                    {e.beforeHolderId?personName(e.beforeHolderId):'保持者なし'} → {e.afterHolderId?personName(e.afterHolderId):'未確定'}
+                    <button type="button" disabled={p.loading||!seedMatches} onClick={()=>openRecord('event',e.eventId,e.year)}>
+                      この移転の記録と判断を開く
                     </button></li>)}</ul>}
               </details>
             </section>}
@@ -384,7 +506,7 @@ export function ObservationPanel(p:Props){
             {titleEvents.length===0&&<p className="note">この年の記録では直接の変化・関連を確認できません。何も起きなかったとは断定しません。</p>}
             {titleEvents.length>0&&<ul>{titleEvents.map(e=><li key={e.eventId}>
               <button type="button" data-testid="obs-title-event-link" onClick={()=>openTitleEvent(e.eventId)}>
-                {e.year}年 {labelOf(e.eventType)}（Event）
+                {e.year}年 {readableEvent(e)}（Event）
               </button>
             </li>)}</ul>}
             {titleTraces.length>0&&<ul>{titleTraces.map(t=><li key={t.traceId}>
@@ -394,6 +516,7 @@ export function ObservationPanel(p:Props){
             </li>)}</ul>}
           </div>}
           {person&&v.year<1350&&persons.find(x=>x.personId===person)?.interactionRole!=='SUPPORTING'&&
+            persons.some(x=>x.personId===person)&&
             <button type="button" className="cta" data-testid="obs-to-intervention" disabled={!seedMatches||p.loading} onClick={()=>p.onIntervene(v.year,person)}>
               この人物と年から介入を検討する
             </button>}

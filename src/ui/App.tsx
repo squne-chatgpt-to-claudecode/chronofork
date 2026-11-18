@@ -74,7 +74,7 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
   const [obsLoading,setObsLoading]=useState(false)
   const [obsError,setObsError]=useState<{code:string;message:string}>()
   const [obsProgress,setObsProgress]=useState<PlayProgress>()
-  const [obsTarget,setObsTarget]=useState<{year:number;personId:string;seed:number;token:number}>()
+  const [obsTarget,setObsTarget]=useState<{year:number;personId:string;secondPersonId?:string;seed:number;token:number}>()
   const obsRef=useRef<ObservationHandle|undefined>(undefined)
   const obsToken=useRef(0)
   // 人物選択用のA0候補（明示操作で取得）。seed・モードを持ち、条件が変わると使われない。
@@ -224,12 +224,12 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
       setCandidateSet(view.candidates)
     })
   }
-  const observationToIntervene=(year:number,personId:string)=>{
+  const observationToIntervene=(year:number,personId:string,secondPersonId?:string)=>{
     if(!observation||observation.seed!==Number(observationSeedText.trim()))return
     setSeedText(String(observation.seed))
-    setObsTarget(old=>({year,personId,seed:observation.seed,token:(old?.token??0)+1}))
+    setObsTarget(old=>({year,personId,...(secondPersonId===undefined?{}:{secondPersonId}),seed:observation.seed,token:(old?.token??0)+1}))
     setWorkspaceOpen(true)
-    setNotice('観測年・人物を介入フォームへ反映しました。2人目と補正値を確認してください。')
+    setNotice(secondPersonId===undefined?'観測年・人物を介入フォームへ反映しました。2人目と補正値を確認してください。':'観測年と婚姻候補の2人を介入フォームへ反映しました。補正値と期間を確認してください。')
     setTimeout(()=>document.getElementById('branch-heading')?.scrollIntoView?.({block:'start'}),0)
   }
   const stopCandidates = () => {

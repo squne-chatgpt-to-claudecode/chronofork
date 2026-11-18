@@ -8,6 +8,9 @@ export type EventNames = Readonly<{
   dynasty: (id: Id) => string | undefined
   /** 既存呼出しに互換。未記録の国名は生成しない。 */
   country?: (id: Id) => string | undefined
+  /** 称号名・地域名。未指定または未解決なら生IDを出さず「名前未確認」と表示する。 */
+  title?: (id: Id) => string | undefined
+  region?: (id: Id) => string | undefined
 }>
 export type EventSummary = Readonly<{ headline: string; lines: readonly string[] }>
 
@@ -90,6 +93,57 @@ export function describeEvent(e: EventLogEntry, names: EventNames): EventSummary
           '変更後: ' + (after ? person(after) : '未確定（後継者を推定しません）'),
         ],
       }
+    }
+    case 'LEGAL_TITLE_TRANSFER': {
+      // 実stateChangeの保持者の前後だけを読む。移転の理由・正式な継承の成立は推定しない（理由は紐づくDecisionTraceで確認）。
+      const m = e.stateChanges.map(c => ({ c, id: /^\$\.titles\[(.+)\]\.holder\.personId$/.exec(c.path)?.[1] })).find(x => x.id !== undefined)
+      if (!m || m.id === undefined) return undefined
+      const before = str(m.c.before), after = str(m.c.after)
+      if (!before && m.c.before !== null) return undefined
+      if (!after && m.c.after !== null) return undefined
+      const title = names.title?.(m.id) ?? unresolvedLabel('other', m.id)
+      const hasCase = e.stateChanges.some(c => c.path === '$.titles[' + m.id + '].holder.legalCaseId' && c.after !== null)
+      return {
+        headline: `${title}の保持者が${before ? person(before) : '保持者なし'}から${after ? person(after) : '未確定'}に変更（${e.year}年）`,
+        lines: [
+          '対象称号: ' + title,
+          '変更前の保持者: ' + (before ? person(before) : '記録なし（未確定）'),
+          '変更後の保持者: ' + (after ? person(after) : '未確定（後継者を推定しません）'),
+          ...(hasCase ? ['未確定の保持者について相続審査の案件が紐づけられた'] : []),
+          '変更の理由は、下の「判断の記録」に実際に残っているものだけが根拠です。',
+        ],
+      }
+    }
+    case 'LEGAL_CASE_SET': {
+      const created = e.stateChanges.find(c => c.path.startsWith('$.legal.cases[') && !c.path.includes('].') && c.before === null)?.after
+      const regionRef = e.involvedRefs.find(r => r.kind === 'REGION')
+      const regionName = regionRef && regionRef.kind === 'REGION' ? (names.region?.(regionRef.id) ?? unresolvedLabel('region', regionRef.id)) : undefined
+      const caseStatus = (v: unknown) => v === 'PENDING' ? '保留中（承認も却下もされていない）' : v === 'APPROVED' ? '承認' : v === 'REJECTED' ? '却下' : '状態を確認できない'
+      const list = (v: unknown) => Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined
+      const candText = (ids: readonly string[] | undefined) => ids === undefined ? '記録なし' : ids.length === 0 ? '候補者なし' : ids.map(person).join('、') + '（' + ids.length + '人）'
+      if (isObj(created) && str(created.titleId)) {
+        const title = names.title?.(str(created.titleId)!) ?? unresolvedLabel('other', str(created.titleId)!)
+        const kind = created.kind === 'SUCCESSION' ? '相続審査' : created.kind === 'RECOGNITION' ? '承認審査' : created.kind === 'REVOCATION' ? '取消審査' : '審査'
+        return {
+          headline: `${title}の${kind}が記録された（${e.year}年）`,
+          lines: ['対象称号: ' + title, '審査の状態: ' + caseStatus(created.status), '候補者: ' + candText(list(created.candidatePersonIds)),
+            '審査の状態は記録であり、保持者の変更が成立したことを意味しません。'],
+        }
+      }
+      const cand = e.stateChanges.find(c => c.path.endsWith('].candidatePersonIds'))
+      const stat = e.stateChanges.find(c => c.path.endsWith('].status'))
+      if (!cand && !stat) return undefined
+      const lines: string[] = []
+      if (regionName) lines.push('対象地域: ' + regionName)
+      if (cand) lines.push('候補者（変更前）: ' + candText(list(cand.before)), '候補者（変更後）: ' + candText(list(cand.after)))
+      if (stat) lines.push('審査の状態: ' + caseStatus(stat.before) + ' → ' + caseStatus(stat.after))
+      return { headline: `審査案件の記録が更新（${e.year}年）`, lines }
+    }
+    case 'PERSON_DEATH': {
+      const ref = e.involvedRefs.find(r => r.kind === 'PERSON')
+      const d = e.stateChanges.find(c => c.path.endsWith('].deathYear'))
+      if (!ref || ref.kind !== 'PERSON' || !d || typeof d.after !== 'number') return undefined
+      return { headline: `${person(ref.id)}が死亡（${d.after}年）`, lines: ['この年の記録で、人物の生死が「死亡」に変わった'] }
     }
     default:
       return undefined

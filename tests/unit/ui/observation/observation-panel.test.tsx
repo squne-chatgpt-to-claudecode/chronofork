@@ -7,6 +7,7 @@ import type {ObservationSlice} from '../../../../src/ui/branch-play-source.ts'
 import type {EventLogEntry,DecisionTrace} from '../../../../src/simulation/contracts/index.ts'
 import {ObservationPanel} from '../../../../src/ui/observation/ObservationPanel.tsx'
 import {buildTitleHoldingHistories} from '../../../../src/ui/observation/title-history.ts'
+import { buildPersonRecords } from '../../../../src/ui/observation/person-record.ts'
 
 afterEach(cleanup)
 const world=createExperimentalIntegratedWorld()
@@ -36,7 +37,7 @@ const view:ObservationSlice={
   seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',year:1250,world,events:[event,titleEvent],traces:[trace,titleTrace],
   counts:Array.from({length:101},(_,i)=>({year:1250+i,events:i===0?2:0,traces:i===0?2:0})),
   candidates:{seed:20260101,mode:'INTEGRATED_EXPERIMENTAL',candidates:[]},
-  titleHistories:buildTitleHoldingHistories([world],[titleEvent]),
+  titleHistories:buildTitleHoldingHistories([world],[titleEvent]),personRecords:buildPersonRecords([world],[],[],buildTitleHoldingHistories([world],[titleEvent])),titleLossRecords:[],
   knownA0Ending:null,
   technicalGoal:{status:'NOT_ACHIEVED',assessments:[{
     titleId:'synthetic-title',holderPersonId:null,qualifies:false,

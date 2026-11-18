@@ -30,6 +30,8 @@ import { buildTitleHoldingHistories } from './observation/title-history.ts'
 import { buildA0KnownEnding } from './observation/a0-known-ending.ts'
 import type { A0KnownEnding } from './observation/a0-known-ending.ts'
 import type { TitleHoldingHistory } from './observation/title-history.ts'
+import type { PersonRecord, TitleLossRecord } from './observation/person-record.ts'
+import { buildPersonRecords, buildTitleLossRecords } from './observation/person-record.ts'
 import { buildA0CacheKey, countsOf } from './a0-cache.ts'
 import type { A0Source, SingleA0Cache } from './a0-cache.ts'
 export type { A0Source } from './a0-cache.ts'
@@ -437,6 +439,10 @@ export type ObservationSlice = Readonly<{
   counts:readonly ObservationYearCounts[]
   /** 実A0の各年初から得たTitle保持者推移。正式な継承成立を意味しない。 */
   titleHistories:readonly TitleHoldingHistory[]
+  /** 全期間（1250〜1350）の実A0から作った、人物ごとの観測履歴と判断記録。選択年初の状態とは別。 */
+  personRecords:readonly PersonRecord[]
+  /** 1350年初に保持者を確認できない称号の、最後の保持者喪失の記録（実履歴から導出）。 */
+  titleLossRecords:readonly TitleLossRecord[]
   /** 選択年と分離した、1350年初の確定A0だけに基づく軽量な人物の結末。 */
   knownA0Ending:A0KnownEnding|null
   /** 1250〜1350の実A0全snapshotから作成した軽量KEY人物候補。1年だけの候補ではない。 */
@@ -454,6 +460,7 @@ export type ObservationResult =
 // 保持中の同じA0に対して軽量KEY人物候補を再集計しない。Worker破棄でGC可能。
 const observationCandidateCache=new WeakMap<TimelineRun,PlayCandidateSet>()
 const observationTitleHistoryCache=new WeakMap<TimelineRun,readonly TitleHoldingHistory[]>()
+const observationRecordCache=new WeakMap<TimelineRun,Readonly<{persons:readonly PersonRecord[];losses:readonly TitleLossRecord[]}>>()
 /** 実A0の確定結果だけを読む。UIが計算規則や架空の歴史を生成しないための純粋関数。 */
 export function sliceA0Observation(
   a0:TimelineRun,year:number,mode:'INTEGRATED_EXPERIMENTAL',a0Source:A0Source,
@@ -486,10 +493,17 @@ export function sliceA0Observation(
     titleHistories=buildTitleHoldingHistories(a0.result.snapshots,a0.result.eventLog)
     observationTitleHistoryCache.set(a0,titleHistories)
   }
+  let records=observationRecordCache.get(a0)
+  if(!records){
+    const persons=buildPersonRecords(a0.result.snapshots,a0.result.eventLog,a0.result.decisionTraces,titleHistories)
+    records={persons,losses:buildTitleLossRecords(titleHistories,persons)}
+    observationRecordCache.set(a0,records)
+  }
   const finalWorld=a0.result.snapshots.find(w=>w.year===GOAL_YEAR)
   const knownA0Ending=buildA0KnownEnding(world,finalWorld)
   return {
     seed:a0.inputs.seed,mode,year,world,events,traces,counts,candidates,titleHistories,knownA0Ending,
+    personRecords:records.persons,titleLossRecords:records.losses,
     goal:a0.result.goal,technicalGoal:a0.result.technicalGoal,status:a0.result.status,a0Source,
   }
 }

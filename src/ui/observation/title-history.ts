@@ -11,7 +11,8 @@ export type TitleHoldingInterval = Readonly<{
     |Readonly<{status:'UNDETERMINED'}>
     |Readonly<{status:'NOT_RECORDED'}>
 }>
-export type TitleTransferEvidence=Readonly<{year:number;eventId:Id}>
+/** 確定したTitle移転Eventの保持者の前後（stateChangeにあるものだけ。無ければ省略）。 */
+export type TitleTransferEvidence=Readonly<{year:number;eventId:Id;beforeHolderId?:Id;afterHolderId?:Id}>
 export type TitleHoldingHistory=Readonly<{
   titleId:Id
   kind:Title['kind']
@@ -63,7 +64,12 @@ export function buildTitleHoldingHistories(
     const pathPrefix='$.titles['+titleId+'].holder'
     const transfers=eventLog.filter(e=>e.eventType.split('+').includes('LEGAL_TITLE_TRANSFER')&&
       e.stateChanges.some(c=>c.path===pathPrefix||c.path.startsWith(pathPrefix+'.')))
-      .map(e=>({year:e.year,eventId:e.eventId}))
+      .map(e=>{
+        const c=e.stateChanges.find(x=>x.path===pathPrefix+'.personId')
+        return {year:e.year,eventId:e.eventId,
+          ...(typeof c?.before==='string'?{beforeHolderId:c.before}:{}),
+          ...(typeof c?.after==='string'?{afterHolderId:c.after}:{})}
+      })
       .sort((a,b)=>a.year-b.year||a.eventId.localeCompare(b.eventId))
     return {titleId,kind:meta.title.kind,label:titleLabel(meta.title,meta.world),intervals,transfers}
   })
