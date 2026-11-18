@@ -2,7 +2,7 @@
 // 婚姻・出生・死亡・王朝所属・相続の成立は固定せず、実際の1250〜1350年の計算結果から不変条件(人口保存・出生枠・
 // 候補重複・禁親/重婚審査・出典区別・決定性・A0/A1比較可能性)を検査し、観測値を console.info へ出す。
 import { appendFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import {
   createMultiHouseEvaluators, createMultiHouseWorld, createExperimentalWorld, createExperimentalOrdinaryLegalTrial,
   integratedRunConfigIdentity, multiHousePersonRecords, multiHouseRunConfigDigest, multiHouseRunConfigIdentity,
@@ -37,6 +37,7 @@ function run(seed: number, ledger: readonly StatModifier[] = [], branchId = 'mul
   return { result, ms: Date.now() - t0 }
 }
 const cache = new Map<string, { result: Run; ms: number }>()
+afterAll(() => cache.clear())
 const cached = (seed: number) => {
   const k = String(seed)
   if (!cache.has(k)) cache.set(k, run(seed))
@@ -103,7 +104,7 @@ describe('複数家門試遊構成: 初期世界と静的な構成', () => {
   it('国家3・地域6・人口集団10・家門6・重要人物8のまま、SUPPORTING/出生人物は初期に存在せず匿名出生履歴は空から蓄積', () => {
     expect([world.countries.length, world.regions.length, world.groups.length, world.houses.length, world.persons.length])
       .toEqual([3, 6, 10, 6, 8])
-    expect(world.persons.every(p => p.interactionRole !== 'SUPPORTING' && p.fatherId === undefined || p.personId === 'person-exp-02' || p.personId === 'person-exp-03')).toBe(true)
+    expect(world.persons.every(p => p.interactionRole !== 'SUPPORTING' && p.motherId === undefined)).toBe(true)
     expect(world.demographics.anonymousBirthHistory).toEqual([])
     expect(world.year).toBe(1250)
     const base = createExperimentalWorld()
@@ -168,7 +169,6 @@ describe('複数家門試遊構成: 初期世界と静的な構成', () => {
     expect(JSON.stringify(id)).not.toContain('seed')
     expect(JSON.stringify(multiHouseRunConfigIdentity())).toBe(JSON.stringify(id))
     expect(multiHouseRunConfigDigest()).toMatch(/^[0-9a-f]{16}$/)
-    expect(multiHouseRunConfigDigest()).toBe(multiHouseRunConfigDigest())
     expect(JSON.stringify(integratedRunConfigIdentity())).not.toBe(JSON.stringify(id)) // 別構成のA0キャッシュと衝突しない
     expect(MULTI_HOUSE_RUN_CONDITIONS).toMatchObject({ startYear: 1250, endYear: 1350, primarySeed: MULTI_HOUSE_SEED })
     expect(MULTI_HOUSE_SEED).toBe(20260101)
@@ -179,7 +179,9 @@ describe('複数家門試遊構成: 初期世界と静的な構成', () => {
     const a0 = createMultiHouseEvaluators(w, [])
     const a1 = createMultiHouseEvaluators(w, [trustCut(1262)])
     expect(Object.keys(a0).sort()).toEqual(Object.keys(a1).sort())
-    expect(multiHouseRunConfigDigest()).toBe(multiHouseRunConfigDigest())
+    const before = JSON.stringify(multiHouseRunConfigIdentity())
+    createMultiHouseEvaluators(w, [trustCut(1262)])
+    expect(JSON.stringify(multiHouseRunConfigIdentity())).toBe(before) // ledger付きfactory呼出でidentityは変わらない
     expect(() => createMultiHouseEvaluators({ ...w, persons: [] } as WorldState, [trustCut(1262)])).toThrow(/INVALID_MULTI_HOUSE_EVALUATORS/)
   })
 })
@@ -369,7 +371,6 @@ describe('主試遊seed 1250〜1350: 世代更新と不変条件（実計算）'
     const a1 = run(MULTI_HOUSE_SEED, [trustCut(1262)], 'multi-house-a1').result
     expect(a1.status).toBe('COMPLETED')
     for (let i = 0; i < 1262 - 1250; i++) expect(a1.snapshots[i]).toEqual(a0.snapshots[i]) // 1262年初まで同一
-    expect(multiHouseRunConfigDigest()).toBe(multiHouseRunConfigDigest())
   }, LONG)
 })
 

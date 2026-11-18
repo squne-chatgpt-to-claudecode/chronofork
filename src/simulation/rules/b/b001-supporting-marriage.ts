@@ -5,6 +5,7 @@ import type { EvaluationContext, RuleEvaluator } from '../../engine/evaluators.t
 import { EvaluationFailure } from '../../engine/evaluators.ts'
 import { proposeSupportingMarriageCandidates, validateSupportingMarriageCohorts } from '../../population/supporting-marriage.ts'
 import type { SupportingMarriageCohort } from '../../population/supporting-marriage.ts'
+import { validateSupportingKinshipClearances } from '../../legal/supporting-kinship-clearance.ts'
 import type { SupportingKinshipClearance } from '../../legal/supporting-kinship-clearance.ts'
 
 export const B001_SUPPORTING_VERSION = 'b001-supporting-registration-0:CALIBRATION_ONLY'
@@ -17,7 +18,7 @@ export type B001SupportingInput = Readonly<{
   perCohortSamples: number
   maximumPreviewAge: number
   /**
-   * 任意。指定時は、人物ペア単位の禁親確認証拠(B-005/A-LEG-01が使う台帳と同一のもの)が当年有効な
+   * 任意。指定時は、人物ペア単位の禁親確認証拠(B-005/A-LEG-01が使う台帳と同じ入力。照合条件も同じ: 管轄一致・当年有効・ちょうど1件)が当年有効な
    * 候補だけを個別化する。証拠の無い候補を記録して予算・生存枠を使い切ること(候補枯渇)を避けるだけで、
    * 禁親審査そのものは緩和しない(審査はB-005/A-LEG-01が従来どおり再実施)。未指定は従来動作。
    */
@@ -39,7 +40,7 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
       !validNumber(input.perCohortSamples, 1, 16) ||
       !validNumber(input.maximumPreviewAge, 18, 100) ||
       (input.maxOpenCandidatesPerSeeker !== undefined && !validNumber(input.maxOpenCandidatesPerSeeker, 1, 8)) ||
-      (input.kinshipClearances !== undefined && !Array.isArray(input.kinshipClearances)))
+      (input.kinshipClearances !== undefined && validateSupportingKinshipClearances(input.kinshipClearances).length > 0))
     return {ok:false,issues:['INVALID_SUPPORTING_REGISTRATION_CALIBRATION']}
   const cohorts = structuredClone(input.cohorts) as SupportingMarriageCohort[]
   const settings = Object.freeze({
@@ -55,9 +56,11 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
     clearanceByPair.set(k, [...(clearanceByPair.get(k) ?? []), c])
   }
   const evidenceBacked = input.kinshipClearances !== undefined
-  const cleared = (a: Id, b: Id, year: number): boolean =>
+  // B-005/A-LEG-01(reviewSupportingKinshipClearance)と同じ厳しさ: 管轄一致・当年有効・ちょうど1件のときだけ。
+  const cleared = (a: Id, b: Id, year: number, countryId: Id | undefined): boolean =>
+    countryId !== undefined &&
     (clearanceByPair.get(JSON.stringify(cmp(a, b) <= 0 ? [a, b] : [b, a])) ?? [])
-      .some(c => c.checkedYear <= year && year < c.validUntilYear)
+      .filter(c => c.countryId === countryId && c.checkedYear <= year && year < c.validUntilYear).length === 1
   const evaluator: RuleEvaluator = (world: WorldState, ctx: EvaluationContext): RuleOutcome => {
     if (ctx.ruleId !== 'B-001' || ctx.phase !== 3 || ctx.year !== world.year) {
       throw new EvaluationFailure('B-001補助人物記録は当年フェーズ3に限ります',[
@@ -91,6 +94,7 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
       })
     }
     for (const seeker of seekers) {
+      const seekerCountry = world.houses.find(h => h.houseId === seeker.houseId)?.countryId
       if (commands.length >= settings.maxRecordsPerYear ||
           active + commands.length >= settings.maxAliveSupporting){
         defer(seeker.personId,'SUPPORTING_RECORD_BUDGET_EXCEEDED')
@@ -98,14 +102,14 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
       }
       if (evidenceBacked && settings.maxOpenCandidatesPerSeeker !== undefined) {
         const open = world.persons.filter(p => p.alive && p.interactionRole === 'SUPPORTING' &&
-          !married.has(p.personId) && p.sex !== seeker.sex && cleared(seeker.personId, p.personId, ctx.year)).length
+          !married.has(p.personId) && p.sex !== seeker.sex && cleared(seeker.personId, p.personId, ctx.year, seekerCountry)).length
         if (open >= settings.maxOpenCandidatesPerSeeker) {
           defer(seeker.personId, 'OPEN_EVIDENCE_BACKED_CANDIDATES_AT_LIMIT')
           continue
         }
       }
       const supplied = proposeSupportingMarriageCandidates(world, seeker.personId, eligibleCohorts, {
-        ...(evidenceBacked ? { candidateFilter: (c: { candidateId: Id }) => cleared(seeker.personId, c.candidateId, ctx.year) } : {}),
+        ...(evidenceBacked ? { candidateFilter: (c: { candidateId: Id }) => cleared(seeker.personId, c.candidateId, ctx.year, seekerCountry) } : {}),
         seed: ctx.seed,
         maxCandidates: 1,
         perCohortSamples: settings.perCohortSamples,

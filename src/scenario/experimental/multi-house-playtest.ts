@@ -113,7 +113,9 @@ export const MULTI_HOUSE_B009_CALIBRATION = Object.freeze({
 })
 
 /**
- * 禁親証拠: 人物ペア単位の合成CALIBRATION_ONLY台帳。供給しないペアは B-005/A-LEG-01 が DEFER のまま。
+ * 禁親証拠: 人物ペア単位の合成CALIBRATION_ONLY台帳(実在の系譜記録ではなく、無血縁の事実を示さない)。
+ * 検査できるのは「台帳があるペアだけが B-005/A-LEG-01 の再審査へ進む」という配線であり、家門差・性別は
+ * 無血縁の根拠ではなく、試験用に証拠を割り当てる対象を絞る条件にすぎない。台帳に無いペアは B-005/A-LEG-01 が DEFER のまま。
  * 対象は「初期のエルディア重要人物(IDが固定)」×「供給コホートの個別化候補(IDがcohort×ordinalで決定的)」の
  * 異性・異家門ペアのみ。familyPoolId・家門差・親ID欠落は証明ではなく、証拠は台帳の個別記録だけ。
  * 実出生した人物のIDは出生前に列挙できないため、実出生人物×SUPPORTINGのペアには証拠を与えない(DEFER)。
@@ -138,7 +140,7 @@ function buildClearances(): SupportingKinshipClearance[] {
         out.push({
           clearanceId: `multi-house:kinship-check:${JSON.stringify(ids)}`,
           personIds: ids, countryId: 'country-eldia', checkedYear, validUntilYear,
-          sourceEvidenceId: `multi-house:person-level-lineage-record:${JSON.stringify(ids)}`,
+          sourceEvidenceId: `multi-house:synthetic-calibration-record:${JSON.stringify(ids)}`,
           provenance: 'CALIBRATION_ONLY',
         })
       }
