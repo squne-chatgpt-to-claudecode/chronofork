@@ -32,7 +32,11 @@ test.describe('PR #118 理由を調べて介入へ進む探索経路（opt-in）
       await page.getByRole('button',{name:'前年',exact:true}).click()
       await expect(page.getByTestId('obs-year-label')).toHaveText(`${year-1}年初`,{timeout:90_000})
       await expect(page.getByTestId('obs-person')).toHaveValue(lostPerson)
-      await page.getByTestId('history-titles').getByRole('button').first().click()
+      const titleEntry=page.getByTestId('history-titles').locator('li').first()
+      const titleYear=(await titleEntry.innerText()).match(/(\d{4})(?:〜\d{4})?年初/)![1]
+      await titleEntry.getByRole('button').click()
+      await expect(page.getByTestId('obs-year-label')).toHaveText(`${titleYear}年初`,{timeout:90_000})
+      await expect(page.getByTestId('obs-context-line')).toContainText(`${titleYear}年初`)
       await expect(page.getByTestId('obs-title-history')).toBeVisible()
       const ctx=await page.getByTestId('obs-context-line').innerText()
       await page.getByTestId('obs-tab-world').click()
