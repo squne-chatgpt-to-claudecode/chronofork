@@ -28,6 +28,7 @@ import {
   goalStatusLabel,
   indexHistory,
   lastComputedYear,
+  pendingExperimentalRun,
   runExperimentalTimeline,
   snapshotOf,
 } from './timeline-source.ts'
@@ -44,11 +45,15 @@ function Unconnected({ children }: { children: string }) {
   return <span className="badge badge-off">未接続: {children}</span>
 }
 
-/** run は試験用の注入口。未指定なら初期化時に一度だけ試験計算を行う。 */
+function isLegacyEntry():boolean{
+  return typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('entry')==='legacy'
+}
+
+/** run は試験用の注入口。未指定なら通常入口では旧試験計算を行わず、?entry=legacy または旧試験を開いたときに計算する。 */
 export default function App({ run: injected, playRunner = workerPlayRunner, candidatesRunner = workerCandidatesRunner }:
   Readonly<{ run?: TimelineRun; playRunner?: PlayRunner; candidatesRunner?: CandidatesRunner }>) {
-  const [run, setRun] = useState<TimelineRun>(() => injected ?? runExperimentalTimeline(DEFAULT_SEED))
-  const [seedText, setSeedText] = useState(String(run.inputs.seed))
+  const [runState, setRun] = useState<TimelineRun>(() => injected ?? (isLegacyEntry() ? runExperimentalTimeline(DEFAULT_SEED) : pendingExperimentalRun(DEFAULT_SEED)))
+  const [seedText, setSeedText] = useState(String(runState.inputs.seed))
   // 統合A0の初期例は別seed。画面に明示し、変更後の値を実観測へ渡す。
   const [observationSeedText,setObservationSeedText]=useState(String(INTEGRATED_PLAY_DEFAULTS.seed))
   const [comparison, setComparison] = useState<PlayView | undefined>(undefined)
@@ -64,8 +69,7 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
   const handleRef = useRef<PlayRunHandle | undefined>(undefined)
   const [a0Reused, setA0Reused] = useState(false)
   // 初回は実A0の観測を主入口にする。旧試験UIは明示的な「開発用」入口でのみ開く。
-  const [workspaceOpen,setWorkspaceOpen]=useState(()=>
-    typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('entry')==='legacy')
+  const [workspaceOpen,setWorkspaceOpen]=useState(isLegacyEntry)
   const [observation,setObservation]=useState<ObservationSlice>()
   const [obsLoading,setObsLoading]=useState(false)
   const [obsError,setObsError]=useState<{code:string;message:string}>()
@@ -81,6 +85,9 @@ export default function App({ run: injected, playRunner = workerPlayRunner, cand
   const candHandleRef = useRef<CandidatesRunHandle | undefined>(undefined)
   const [playError, setPlayError] = useState<{code:string;message:string} | undefined>(undefined)
   const [activeBranch, setActiveBranch] = useState<BranchChoice|'A2'>('A1')
+  // 旧試験を開いた時点で初めて旧試験計算を行う（通常の初期表示では実行しない）。
+  const needLegacyRun = workspaceOpen && !!runState.pending && !observation && !comparison
+  const run = useMemo(() => (needLegacyRun ? runExperimentalTimeline(DEFAULT_SEED) : runState), [needLegacyRun, runState])
   const { result } = run
   const history = useMemo(() => indexHistory(result), [result])
 

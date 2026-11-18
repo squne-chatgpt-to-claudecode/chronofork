@@ -120,7 +120,7 @@ it('ユーザー指定のA0 seedを使用し、観測完了後も再観測・旧
   fireEvent.click(screen.getByTestId('obs-start'))
   await screen.findByTestId('obs-seed-active')
   expect(called).toHaveBeenCalledWith(expect.objectContaining({seed:8,year:1250}))
-  fireEvent.click(screen.getByTestId('obs-reset'))
+  fireEvent.click(screen.getByTestId('obs-reset'));fireEvent.click(screen.getByTestId('obs-reset-confirm'))
   expect(screen.queryByTestId('obs-year-label')).toBeNull()
   expect(screen.getByTestId('seed-input')).toHaveProperty('value','8')
 })

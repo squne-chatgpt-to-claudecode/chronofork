@@ -52,6 +52,7 @@ export function ObservationPanel(p:Props){
   const v=p.observation
   const seedValid=/^\d+$/.test(p.seedText.trim())&&Number.isSafeInteger(Number(p.seedText.trim()))&&Number(p.seedText.trim())>=0
   const seedMatches=v!==undefined&&v.seed===Number(p.seedText.trim())&&seedValid
+  const [confirmReset,setConfirmReset]=useState(false)
   const [selectedPerson,setSelectedPerson]=useState('')
   const [selectedTitle,setSelectedTitle]=useState('')
   const [eventId,setEventId]=useState('')
@@ -157,7 +158,12 @@ export function ObservationPanel(p:Props){
           onClick={()=>{setEventType('ALL');p.onLoad(v?.year??1250)}} disabled={p.loading||!seedValid}>
           {!v?'統合A0を計算して観測':seedMatches?'このseedの原史A0を再表示':'このseedで原史A0を計算'}
         </button>
-        {v&&<button type="button" data-testid="obs-reset" disabled={p.loading} onClick={p.onReset}>旧試験画面へ戻る</button>}
+        {v&&!confirmReset&&<button type="button" data-testid="obs-reset" disabled={p.loading} onClick={()=>setConfirmReset(true)}>開発用：旧試験画面へ切り替え</button>}
+        {v&&confirmReset&&<span role="alert" data-testid="obs-reset-warning">
+          現在の原史A0の観測結果は破棄されます。
+          <button type="button" data-testid="obs-reset-confirm" disabled={p.loading} onClick={()=>{setConfirmReset(false);p.onReset()}}>破棄して切り替える</button>
+          <button type="button" data-testid="obs-reset-cancel" onClick={()=>setConfirmReset(false)}>キャンセル</button>
+        </span>}
         {!seedValid&&<span className="missing" role="alert">seedは0以上の安全な整数で指定してください。</span>}
         {v&&!seedMatches&&<p role="status" data-testid="obs-seed-mismatch">
           表示中の原史はseed {v.seed}です。入力seedが異なるため、再観測するまでこの結果から介入できません。

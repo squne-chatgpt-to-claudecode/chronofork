@@ -139,7 +139,7 @@ describe('介入前の原史A0観測画面',()=>{
     expect(screen.getByTestId('obs-to-intervention')).toHaveProperty('disabled',true)
     fireEvent.change(screen.getByTestId('obs-seed-input'),{target:{value:'10'}})
     expect(onSeedText).toHaveBeenCalledWith('10')
-    fireEvent.click(screen.getByTestId('obs-reset'))
+    fireEvent.click(screen.getByTestId('obs-reset'));fireEvent.click(screen.getByTestId('obs-reset-confirm'))
     expect(onReset).toHaveBeenCalled()
   })
   it('ドラッグ中は年が滑らかに移動し、離したときに一回だけ観測年を確定する',()=>{
