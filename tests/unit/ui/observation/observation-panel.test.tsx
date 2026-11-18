@@ -45,6 +45,49 @@ const view:ObservationSlice={
   }]},goal:null,status:'COMPLETED',a0Source:'COMPUTED',
 }
 
+describe('別年の記録の非同期導線',()=>{
+  const records=view.personRecords.map(r=>r.personId!==person.personId?r:{...r,
+    deathYear:1251,deathEventId:event.eventId,
+    judgments:[{ruleId:'B-002' as const,status:'DEFER' as const,fromYear:1251,toYear:1251,count:1,
+      reasonCodes:[],firstTraceId:trace.traceId,lastTraceId:trace.traceId}]})
+  const initial={...view,personRecords:records}
+  const target={...initial,year:1251,events:[{...event,year:1251}],traces:[{...trace,year:1251}]}
+  const props={...seedProps,onLoad:vi.fn(),onCancel:vi.fn(),onIntervene:vi.fn()}
+  for(const kind of ['event','trace'] as const){
+    const open=()=>fireEvent.click(screen.getByTestId(kind==='event'?'history-death-link':'history-open-trace'))
+    const detail='obs-'+kind+'-detail'
+    it(kind+'は要求したseedと年の取得成功後だけ開く',()=>{
+      const {rerender}=render(<ObservationPanel {...props} observation={initial} loading={false}/>)
+      open()
+      expect(props.onLoad).toHaveBeenLastCalledWith(1251)
+      expect(screen.queryByTestId(detail)).toBeNull()
+      rerender(<ObservationPanel {...props} observation={initial} loading/>)
+      expect(screen.queryByTestId(detail)).toBeNull()
+      rerender(<ObservationPanel {...props} observation={target} loading={false}/>)
+      expect(screen.getByTestId(detail).textContent).toContain(kind==='event'?'synthetic-e':'B-005')
+    })
+    for(const outcome of ['failure','cancel','seed'] as const){
+      it(kind+'の保留は'+outcome+'後に復活しない',()=>{
+        const {rerender}=render(<ObservationPanel {...props} observation={initial} loading={false}/>)
+        open()
+        rerender(<ObservationPanel {...props} observation={initial} loading/>)
+        if(outcome==='cancel')fireEvent.click(screen.getByTestId('obs-cancel'))
+        if(outcome==='failure')rerender(<ObservationPanel {...props} observation={initial} loading={false} error={{code:'FAILED',message:'failed'}}/>)
+        if(outcome==='seed')rerender(<ObservationPanel {...props} seedText="9" observation={initial} loading={false}/>)
+        rerender(<ObservationPanel {...props} observation={target} loading={false}/>)
+        expect(screen.queryByTestId(detail)).toBeNull()
+      })
+    }
+    it(kind+'の選択は同じIDを持つ別seedの記録へ引き継がれない',()=>{
+      const {rerender}=render(<ObservationPanel {...props} observation={initial} loading={false}/>)
+      fireEvent.click(screen.getByTestId(kind==='event'?'obs-event-list':'obs-trace-list').querySelector('button')!)
+      expect(screen.getByTestId(detail)).toBeTruthy()
+      rerender(<ObservationPanel {...props} seedText="9" observation={{...initial,seed:9}} loading={false}/>)
+      expect(screen.queryByTestId(detail)).toBeNull()
+    })
+  }
+})
+
 describe('介入前の原史A0観測画面',()=>{
   it('Eventが無いDEFERと厳格な技術Goal不足を区別して表示し、実WorldStateの人物を選べる',()=>{
     const onIntervene=vi.fn()

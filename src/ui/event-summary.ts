@@ -1,6 +1,7 @@
 // 既知Eventを「誰に何が起きたか」へ読み替える表示専用の関数。
 // Event.stateChanges の確定値だけを使い、形が想定と違えば undefined を返して生データ表示へ戻す（事実を創作しない）。
 import type { EventLogEntry, Id } from '../simulation/contracts/index.ts'
+import { baseDisplayName, personIdTag } from './observation/person-display.ts'
 
 export type EventNames = Readonly<{
   person: (id: Id) => string | undefined
@@ -63,7 +64,12 @@ export function describeEvent(e: EventLogEntry, names: EventNames): EventSummary
       if (isObj(ld)) {
         lines.push(ld.status === 'UNDETERMINED' ? '法的王朝: 未確定' : `法的王朝: ${str(ld.dynastyId) ? dynasty(str(ld.dynastyId)!) : String(ld.status)}`)
       }
-      return { headline: `${shortPersonName(str(after.name)!)}が生まれた（${e.year}年）`, lines }
+      const id=str(after.personId)!, raw=str(after.name)!, resolved=names.person(id)
+      const experimental=/^(試験用自律児|試験用補助人物|実験用の記名候補)/.test(resolved??raw)
+      const fallback=experimental && (after.sex==='MALE'||after.sex==='FEMALE')
+        ? `${baseDisplayName({personId:id,name:resolved??raw,sex:after.sex,birthYear:typeof after.birthYear==='number'?after.birthYear:e.year})}・識別${personIdTag(id)}`
+        : shortPersonName(resolved??raw)
+      return { headline: `${fallback}が生まれた（${e.year}年）`, lines }
     }
     case 'LEGAL_DYNASTY_SET': {
       const id = e.involvedRefs.find((r) => r.kind === 'PERSON')

@@ -106,7 +106,7 @@ describe('DEC-073 — 選択対象のA0/A1実記録比較', () => {
     const child = ev('birth-child', 1251, 'PERSON_BIRTH', [{kind:'PERSON',id:childId}])
     const category = EVENT_CATEGORIES.find(c => c.key === 'birth')!
     const rows:CategoryRow[] = [{category,a0:[child],a1:[],a0Only:[child],a1Only:[],changed:[]}]
-    const world = {persons:[{personId:childId,name:'試験用自律児 1251 (marriage:normal:[1250,"nested"])'}],
+    const world = {persons:[{personId:childId,name:'試験用自律児 1251 (marriage:normal:[1250,"nested"])',sex:'MALE',birthYear:1251}],
       houses:[],groups:[],countries:[],regions:[]} as unknown as WorldState
     render(<HistoricalChangesExplorer rows={rows} totalDifferences={1}
       view={view(run([child],[]),run([],[]))} worldA0={world} worldA1={world}
@@ -114,7 +114,7 @@ describe('DEC-073 — 選択対象のA0/A1実記録比較', () => {
     const target = screen.getByTestId('change-target') as HTMLSelectElement
     const choice = [...target.options].find(o => o.value === 'PERSON:' + childId)
     expect(choice).toBeDefined()
-    expect(choice?.textContent).toBe('人物: 試験用自律児 1251')
+    expect(choice?.textContent).toBe('人物: 試験人物（1251年生・男）')
     expect(choice?.value).toBe('PERSON:' + childId)
   })
 

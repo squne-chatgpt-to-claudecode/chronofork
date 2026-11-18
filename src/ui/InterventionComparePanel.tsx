@@ -1,7 +1,7 @@
 // A0/A1の試験用介入操作。描画用の差分は実WorldState/EventLog/DecisionTraceからのみ取得する。
 // GAME-01〜05と正式勝敗は未成立。CALIBRATION_ONLYの明示法的承認だけを試験で注入する。
 import { useMemo, useState } from 'react'
-import { compareYear, directlyInvolvesPair, playPersonOptions, playModeLabel, INTEGRATED_PLAY_DEFAULTS, PLAY_DEFAULT_MODE, PLAY_DEMO_DELTA, PLAY_DEMO_DURATION, PLAY_DEMO_PAIR, PLAY_DEMO_YEAR } from './branch-play-source.ts'
+import { compareYear, directlyInvolvesPair, playInitialWorld, playModeLabel, INTEGRATED_PLAY_DEFAULTS, PLAY_DEFAULT_MODE, PLAY_DEMO_DELTA, PLAY_DEMO_DURATION, PLAY_DEMO_PAIR, PLAY_DEMO_YEAR } from './branch-play-source.ts'
 import { observeDynastyContinuity } from './dynasty-continuity.ts'
 import type { ContinuityObservation } from './dynasty-continuity.ts'
 import { NALVEN_DYNASTY_ID } from '../scenario/experimental/index.ts'
@@ -61,7 +61,8 @@ type Props=Readonly<{
   onInspectEvent:(choice:BranchChoice,id:string)=>void
   onInspectTrace:(choice:BranchChoice,id:string)=>void
 }>
-const persons=playPersonOptions()
+const persons=playInitialWorld().persons.filter(p=>p.interactionRole!=='SUPPORTING')
+  .map(p=>({id:p.personId,label:candidateLabel({id:p.personId,name:p.name,sex:p.sex,birthYear:p.birthYear})}))
 /** 既知のEvent種別だけ平易な見出しを付ける。未知の種別は生の種別名をそのまま出す（用語を創作しない）。 */
 const EVENT_LABEL:Readonly<Record<string,string>>={MARRIAGE_REGISTER:'婚姻の成立',PERSON_BIRTH:'人物の出生',LEGAL_DYNASTY_SET:'法的王朝の確定'}
 const eventLabel=(t:string)=>EVENT_LABEL[t]?`${EVENT_LABEL[t]}（${t}）`:t
@@ -130,6 +131,11 @@ export function InterventionComparePanel(p:Props){
   // 候補: 現在のseed・方式に一致するA0（明示取得、または表示中の比較のA0）だけを使う。介入年の年初に存在するKEY人物のみ。
   const comparisonSet=useMemo(()=>p.comparison?extractCandidates(p.comparison.input.seed,p.comparison.mode,p.comparison.a0.result.snapshots):undefined,
     [p.comparison])
+  const secondSet=useMemo(()=>p.comparison?.second?extractCandidates(p.comparison.second.input.seed,p.comparison.second.mode,p.comparison.second.a0.result.snapshots):undefined,[p.comparison])
+  const resultName=(id:string,set:PlayCandidateSet|undefined)=>{
+    const c=set?.candidates.find(x=>x.id===id)
+    return c?candidateLabel(c):unresolvedLabel('person',id)
+  }
   const activeSet=candidateSetMatches(p.candidateSet,seed,mode)?p.candidateSet
     :candidateSetMatches(comparisonSet,seed,mode)?comparisonSet:undefined
   const yearOk=/^\d+$/.test(yearText)&&Number.isSafeInteger(year)&&year>=1250&&year<1350
@@ -140,7 +146,7 @@ export function InterventionComparePanel(p:Props){
   const canRun=valid&&personsOk
   // 表示名: 現在の候補→表示中の比較のA0→初期人物。どれにも無いときだけIDを出す。
   const personName=(id:string)=>{
-    const c=activeSet?.candidates.find(x=>x.id===id)??comparisonSet?.candidates.find(x=>x.id===id)
+    const c=activeSet?.candidates.find(x=>x.id===id)
     return c?candidateLabel(c):persons.find(x=>x.id===id)?.label??unresolvedLabel('person',id)
   }
   const personOptions=(selected:string)=>{
@@ -326,7 +332,7 @@ export function InterventionComparePanel(p:Props){
         <h3 id="effect-summary-heading">この介入で、実際に何が変わった？</h3>
         <p data-testid="effect-goal-line">1350年の試験判定（技術検証・正式勝敗ではない）: A0 {trialGoalStatus(p.comparison.a0.result.technicalGoal)} ／ A1 {trialGoalStatus(p.comparison.a1.result.technicalGoal)}{' '}
           <button type="button" onClick={()=>document.getElementById('trial-goal-summary')?.scrollIntoView({block:'start'})}>判定の詳細へ移動</button></p>
-        <p>選んだ2人：<strong>{personName(pair[0])} と {personName(pair[1])}</strong></p>
+        <p>選んだ2人：<strong>{resultName(pair[0],comparisonSet)} と {resultName(pair[1],comparisonSet)}</strong></p>
         <p data-testid="effect-input">介入条件：{input.year}年から{input.durationYears}年間、2人の信頼を
           <strong>{input.signedDelta>0?'+':''}{input.signedDelta}</strong>補正。これは入力値であり、歴史の結果とは別です。</p>
         <div className="effect-cards">
@@ -353,7 +359,7 @@ export function InterventionComparePanel(p:Props){
           </div>
           {p.comparison.second&&<div className="effect-card" data-testid="effect-a2-comparison">
             <h4>追加介入の結果（A1→A2）</h4>
-            <p>{personName(p.comparison.second.input.firstPersonId)} と {personName(p.comparison.second.input.secondPersonId)}に
+            <p>{resultName(p.comparison.second.input.firstPersonId,secondSet)} と {resultName(p.comparison.second.input.secondPersonId,secondSet)}に
               {p.comparison.second.input.signedDelta>0?'+':''}{p.comparison.second.input.signedDelta}の信頼補正を追加しました。</p>
             <p>この年の確定Event差分：<strong>{secondData?.events.length??0}件</strong></p>
             <p className="note">{(secondData?.events.length??0)===0?
@@ -367,9 +373,9 @@ export function InterventionComparePanel(p:Props){
       </section>
       <h3 className="step-title"><span className="step-no">3</span>同じ年のA0/A1を詳しく比べる</h3>
       <div className="headline" data-testid="branch-headline">
-        <p><strong>{personName(pair[0])}と{personName(pair[1])}</strong>（{p.year}年）</p>
+        <p><strong>{resultName(pair[0],comparisonSet)}と{resultName(pair[1],comparisonSet)}</strong>（{p.year}年）</p>
         <ul>
-          <li>対象の判断（B-004）: A0 {traceA0?.status??'判定なし'} → A1 {traceA1?.status??'判定なし'}{decisionChanged?'（変化あり）':'（変化なし）'}</li>
+          <li>対象の判断（B-004）: A0 {traceA0?.status??'判定なし'} → A1 {traceA1?.status??'判定なし'}{!traceA0||!traceA1?'（比較に必要な記録なし）':decisionChanged?'（変化あり）':'（変化なし）'}</li>
           <li data-testid="headline-focused">選んだ2人とその子のEvent差分（{p.year}年・{focused.length}件）: {focused.length===0?'なし':byType(focused).join(' ／ ')}</li>
           <li data-testid="headline-other">その他の人物・集団のEvent差分（{p.year}年・{other.length}件）: {other.length===0?'なし':tally(other)}</li>
         </ul>
@@ -379,7 +385,7 @@ export function InterventionComparePanel(p:Props){
         <p className="note">正式勝敗: 未成立。これは試験版の差分であり、単独原因の断定ではありません。</p>
       </div>
       {p.comparison.mode==='INTEGRATED_EXPERIMENTAL'&&<IntegratedOverview view={p.comparison} calc={p.calc}
-        personLabel={personName} onInspectEvent={p.onInspectEvent} onInspectTrace={p.onInspectTrace}/>}
+        personLabel={id=>{const c=comparisonSet?.candidates.find(x=>x.id===id);return c?candidateLabel(c):unresolvedLabel('person',id)}} onInspectEvent={p.onInspectEvent} onInspectTrace={p.onInspectTrace}/>}
       <div className="headline" id="trial-goal-summary" data-testid="trial-goal-summary">
         <h4>1350年のナルヴェン王朝存続条件（試験判定）</h4>
         <p data-testid="trial-goal-mode">試験方式：{playModeLabel(p.comparison.mode)}</p>

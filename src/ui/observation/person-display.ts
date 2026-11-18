@@ -1,8 +1,14 @@
 // 試験用仮名の通常表示。名前に埋め込まれた固定の役割（当主・嫡男等）は現在の役割ではないため表示しない。
 // 実家門・法的王朝・選択年の称号は、WorldStateの実記録から別の欄に示す。元のnameは変更しない。
 import type { Id } from '../../simulation/contracts/index.ts'
-import { shortPersonName } from '../event-summary.ts'
-import { personIdTag } from '../play-candidates.ts'
+const shortPersonName = (name: string) => name.replace(/\s*\(.*$/, '')
+
+/** 表示用識別タグ。内部IDそのものは変更しない。 */
+export const personIdTag = (id: Id): string => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+  return h.toString(16).padStart(8, '0')
+}
 
 export type DisplayablePerson = Readonly<{
   personId: Id

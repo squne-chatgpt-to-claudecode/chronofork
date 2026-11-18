@@ -2,8 +2,9 @@
 import type { EventLogEntry, Id, Person, WorldState } from '../simulation/contracts/index.ts'
 import type { PlayView } from './branch-play-source.ts'
 import { descendantDepths } from './dynasty-continuity.ts'
-import { describeEvent, shortPersonName, unresolvedLabel } from './event-summary.ts'
+import { describeEvent, unresolvedLabel } from './event-summary.ts'
 import type { EventNames } from './event-summary.ts'
+import { personDisplayNames } from './observation/person-display.ts'
 
 export type EventCategory=Readonly<{key:string;label:string;types:readonly string[]}>
 export const EVENT_CATEGORIES:readonly EventCategory[]=Object.freeze([
@@ -67,8 +68,9 @@ export function buildOverview(v:PlayView):IntegratedOverview{
 
 /** 最終snapshotから引いた表示名。無い参照はundefined（表示側でunresolvedLabelへ）。 */
 export function namesOf(w:WorldState|undefined):EventNames{
+  const person=personDisplayNames(w?.persons??[])
   return {
-    person:id=>{const p=w?.persons.find(x=>x.personId===id);return p?shortPersonName(p.name):undefined},
+    person,
     group:id=>w?.groups.find(g=>g.groupId===id)?.name,
     dynasty:id=>w?.legal.dynasties.find(d=>d.dynastyId===id)?.name,
     country:id=>w?.countries.find(c=>c.countryId===id)?.name,
@@ -77,13 +79,15 @@ export function namesOf(w:WorldState|undefined):EventNames{
 /** 年初snapshotに加え、同じ年の確定PERSON_BIRTH Eventに記録された人物名だけを解決に使う（IDから名前は生成しない）。 */
 export function namesOfYear(w:WorldState|undefined,events:readonly EventLogEntry[]):EventNames{
   const base=namesOf(w)
-  const born=new Map<Id,string>()
+  const born: {personId:Id;name:string;sex:'MALE'|'FEMALE';birthYear:number}[]=[]
   for(const e of events){
     if(e.eventType!=='PERSON_BIRTH')continue
-    const after=e.stateChanges.find(c=>c.path.startsWith('$.persons[')&&c.before===null)?.after as {personId?:unknown;name?:unknown}|null|undefined
-    if(after&&typeof after.personId==='string'&&typeof after.name==='string')born.set(after.personId,shortPersonName(after.name))
+    const after=e.stateChanges.find(c=>c.path.startsWith('$.persons[')&&c.before===null)?.after as {personId?:unknown;name?:unknown;sex?:unknown;birthYear?:unknown}|null|undefined
+    if(after&&typeof after.personId==='string'&&typeof after.name==='string'&&
+      (after.sex==='MALE'||after.sex==='FEMALE'))
+      born.push({personId:after.personId,name:after.name,sex:after.sex,birthYear:typeof after.birthYear==='number'?after.birthYear:e.year})
   }
-  return {...base,person:id=>base.person(id)??born.get(id)}
+  return {...base,person:personDisplayNames([...(w?.persons??[]),...born])}
 }
 export function eventHeadline(e:EventLogEntry,names:EventNames,typeLabel:string):string{
   const d=describeEvent(e,names)
@@ -105,7 +109,7 @@ export function lineageRows(initial:WorldState,final:WorldState|undefined):reado
   const parent=(id:Id|undefined)=>id===undefined?'記録なし':names.person(id)??unresolvedLabel('person',id)
   const dyn=(p:Person)=>p.legalDynasty.status==='DETERMINED'?names.dynasty(p.legalDynasty.dynastyId)??unresolvedLabel('dynasty',p.legalDynasty.dynastyId):'未確定'
   return final.persons.filter(p=>!initialIds.has(p.personId)&&p.birthYear>=initial.year)
-    .map(p=>({personId:p.personId,name:shortPersonName(p.name),birthYear:p.birthYear,generation:depths.get(p.personId)??-1,
+    .map(p=>({personId:p.personId,name:names.person(p.personId)??unresolvedLabel('person',p.personId),birthYear:p.birthYear,generation:depths.get(p.personId)??-1,
       father:parent(p.fatherId),mother:parent(p.motherId),dynasty:dyn(p),alive:p.alive}))
     .sort((a,b)=>a.birthYear-b.birthYear||a.personId.localeCompare(b.personId))
 }

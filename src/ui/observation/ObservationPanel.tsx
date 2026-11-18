@@ -77,14 +77,15 @@ export function ObservationPanel(p:Props){
   const [invTab,setInvTab]=useState<EntityKind>('region')
   const [invSelection,setInvSelection]=useState<Selection|undefined>(undefined)
   // 別の年の記録を開くとき、その年の観測が届いてから対象のEvent/Traceを選ぶ。
-  const [pendingOpen,setPendingOpen]=useState<{kind:'event'|'trace';id:string;year:number}|undefined>(undefined)
+  const [pendingOpen,setPendingOpen]=useState<{kind:'event'|'trace';id:string;year:number;seed:number;error?:Props['error']}|undefined>(undefined)
+  const [recordIdentity,setRecordIdentity]=useState(()=>v?`${v.seed}:${v.year}`:'')
   const [scrubYear,setScrubYear]=useState<number|null>(null) // ドラッグ中のみ表示を更新する
   const persons=useMemo(()=>v?.world.persons.filter(x=>x.birthYear<=v.year)??[],[v])
   const records=useMemo(()=>v?.personRecords??[],[v])
   // 選択人物は、選択年に未出生でも別人へ切り替えない（記録にある人物ならそのまま保持する）。
   const person=records.some(x=>x.personId===selectedPerson)||persons.some(x=>x.personId===selectedPerson)?selectedPerson:
     (persons.find(x=>x.interactionRole!=='SUPPORTING')??persons[0])?.personId??''
-  const nameOf=useMemo(()=>personDisplayNames(records),[records])
+  const nameOf=useMemo(()=>personDisplayNames([...(v?.world.persons??[]),...records]),[v,records])
   const personName=(id:string)=>nameOf(id)??unresolvedLabel('person',id)
   /** 画面表示用の複製。シミュレーション状態は変えず、仮名の表示だけを統一する。 */
   const displayWorld=useMemo(()=>v?{...v.world,persons:v.world.persons.map(x=>({...x,name:nameOf(x.personId)??x.name}))}:undefined,[v,nameOf])
@@ -177,16 +178,27 @@ export function ObservationPanel(p:Props){
     setMainTab('investigate')
     if(v&&v.year===year){applyOpen(kind,id);return}
     yearChange(year)
-    setPendingOpen({kind,id,year})
+    if(v)setPendingOpen({kind,id,year,seed:v.seed,error:p.error})
   }
   const applyOpen=(kind:'event'|'trace',id:string)=>{
     if(kind==='event'){setEventId(id);setTraceId('');setEventType('ALL');setShowAllEvents(true);setRelatedOnly(false)}
     else{setTraceId(id);setTraceOpen(true);setEventId('');setTraceFilter('ALL');setRelatedOnly(false)}
   }
-  // 対象年の観測が届いたら、その年の対象を選ぶ（レンダー中の状態調整）。失敗時は保留を捨てる。
-  if(pendingOpen&&v?.year===pendingOpen.year){
-    setPendingOpen(undefined)
-    applyOpen(pendingOpen.kind,pendingOpen.id)
+  // IDはseed・年をまたいで同一の記録を意味しない。
+  const identity=v?`${v.seed}:${v.year}`:''
+  if(identity!==recordIdentity){
+    setRecordIdentity(identity)
+    setEventId('');setTraceId('')
+  }
+  // 失敗やseed変更後に、後から届いた別の観測で保留を復活させない。
+  if(pendingOpen){
+    if(!seedValid||Number(p.seedText.trim())!==pendingOpen.seed||
+      (v&&v.seed!==pendingOpen.seed)||(p.error&&p.error!==pendingOpen.error)){
+      setPendingOpen(undefined)
+    }else if(v?.seed===pendingOpen.seed&&v.year===pendingOpen.year&&!p.loading){
+      setPendingOpen(undefined)
+      applyOpen(pendingOpen.kind,pendingOpen.id)
+    }
   }
   /** 人物と、その人物が記録に現れる年を一緒に選ぶ。未出生の年のまま別人へ切り替えない。 */
   const focusPerson=(personId:string,year:number)=>{

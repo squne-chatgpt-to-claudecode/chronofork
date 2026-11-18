@@ -2,7 +2,8 @@
 // A1/A2や独自の生死・相続規則は一切参照しない。
 import type { Id } from '../../simulation/contracts/index.ts'
 import type { ObservationSlice } from '../branch-play-source.ts'
-import { shortPersonName } from '../event-summary.ts'
+import { unresolvedLabel } from '../event-summary.ts'
+import { personDisplayNames } from './person-display.ts'
 import { titleLabel } from './title-history.ts'
 
 export type A0FutureContextProps=Readonly<{
@@ -28,11 +29,12 @@ export function A0FutureContext({observation:v,personId,disabled,onYearSelect,on
     const h=v.titleHistories.find(t=>t.titleId===titleId)
     return h?.intervals.find(t=>t.fromYear<=1350&&t.throughYear>=1350)?.holder
   }
+  const nameOf=personDisplayNames([...v.world.persons, ...v.personRecords])
   const holderText=(holder:ReturnType<typeof finalHolder>)=>{
     if(!holder)return '1350年初の保持記録なし'
     if(holder.status==='NOT_RECORDED')return '称号の記録なし'
     if(holder.status==='UNDETERMINED')return '保持者未確定'
-    return shortPersonName(holder.personName)+(holder.life==='DEAD'?'（故人の名義が残存）':
+    return (nameOf(holder.personId)??unresolvedLabel('person',holder.personId))+(holder.life==='DEAD'?'（故人の名義が残存）':
       holder.life==='UNKNOWN'?'（生死未確認）':'')
   }
   return <section className="obs-a0-future" data-testid="obs-future-context" aria-label="選択年と既知の原史A0の結末">
