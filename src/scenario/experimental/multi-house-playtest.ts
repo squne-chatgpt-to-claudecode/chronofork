@@ -49,7 +49,7 @@ export const MULTI_HOUSE_SUPPLY = Object.freeze({
   laterFirstBirthYear: 1250,
   laterLastBirthYear: 1300,
   laterMembersPerCohort: 1,
-  limits: Object.freeze({ maxRecordsPerYear: 2, maxAliveSupporting: 24, perCohortSamples: 1, maximumPreviewAge: 60, maxOpenCandidatesPerSeeker: 2 }),
+  limits: Object.freeze({ maxRecordsPerYear: 2, maxAliveSupporting: 24, perCohortSamples: 1, maximumPreviewAge: 60 }),
 })
 
 const sexForYear = (y: number): 'MALE' | 'FEMALE' => (y % 2 === 0 ? 'FEMALE' : 'MALE')
@@ -112,42 +112,31 @@ export const MULTI_HOUSE_B009_CALIBRATION = Object.freeze({
   initialTrust: 24, initialTrustSpread: 16, annualDelta: 1, houseSupportWeight: 0, sameHouseBonus: 0, maxPairs: 2400,
 })
 
-/**
- * 禁親証拠: 人物ペア単位の合成CALIBRATION_ONLY台帳(実在の系譜記録ではなく、無血縁の事実を示さない)。
- * 検査できるのは「台帳があるペアだけが B-005/A-LEG-01 の再審査へ進む」という配線であり、家門差・性別は
- * 無血縁の根拠ではなく、試験用に証拠を割り当てる対象を絞る条件にすぎない。台帳に無いペアは B-005/A-LEG-01 が DEFER のまま。
- * 対象は「初期のエルディア重要人物(IDが固定)」×「供給コホートの個別化候補(IDがcohort×ordinalで決定的)」の
- * 異性・異家門ペアのみ。familyPoolId・家門差・親ID欠落は証明ではなく、証拠は台帳の個別記録だけ。
- * 実出生した人物のIDは出生前に列挙できないため、実出生人物×SUPPORTINGのペアには証拠を与えない(DEFER)。
+/** 個別の架空試験台帳。各行は当該ペアについて別々の系譜調査を行い、
+ * 禁親範囲に共通祖先が見つからなかったという試験前提である。実在資料でも世界設定でもない。
+ * 家門差・人口出典・性別を証拠として導出せず、この4件以外は未確認のまま扱う。1280年以降の証拠更新は未実装。
  */
-const EVIDENCE_PERSONS = Object.freeze([
-  'person-exp-01', 'person-exp-02', 'person-exp-03', 'person-exp-04', 'person-exp-05', 'person-exp-06',
-] as const)
-const EVIDENCE_WINDOW_YEARS = 30
+const TEST_KINSHIP_RECORDS = [
+  { personId: 'person-exp-02', cohortId: 'multi-house:initial:west:1232:female', ordinal: 0, record: 'fixture:west-1232-0:pedigree-review-02' },
+  { personId: 'person-exp-02', cohortId: 'multi-house:initial:east:1228:female', ordinal: 0, record: 'fixture:east-1228-0:pedigree-review-02' },
+  { personId: 'person-exp-03', cohortId: 'multi-house:initial:west:1228:male', ordinal: 0, record: 'fixture:west-1228-0:pedigree-review-03' },
+  { personId: 'person-exp-03', cohortId: 'multi-house:initial:east:1232:male', ordinal: 0, record: 'fixture:east-1232-0:pedigree-review-03' },
+] as const
 function buildClearances(): SupportingKinshipClearance[] {
-  const world = createExperimentalWorld()
-  const out: SupportingKinshipClearance[] = []
-  for (const cohort of MULTI_HOUSE_SUPPORTING_COHORTS) {
-    for (let ordinal = 0; ordinal < cohort.memberCount; ordinal++) {
-      const sid = supportingCandidateId(cohort.cohortId, ordinal)
-      for (const pid of EVIDENCE_PERSONS) {
-        const p = world.persons.find(x => x.personId === pid)!
-        if (p.sex === cohort.sex || p.houseId === cohort.affiliationHouseId) continue
-        const checkedYear = Math.max(MULTI_HOUSE_START_YEAR, cohort.birthYear + 18)
-        const validUntilYear = Math.min(MULTI_HOUSE_END_YEAR + 1, checkedYear + EVIDENCE_WINDOW_YEARS)
-        if (validUntilYear <= checkedYear) continue
-        const ids = [pid, sid].sort() as [string, string]
-        out.push({
-          clearanceId: `multi-house:kinship-check:${JSON.stringify(ids)}`,
-          personIds: ids, countryId: 'country-eldia', checkedYear, validUntilYear,
-          sourceEvidenceId: `multi-house:synthetic-calibration-record:${JSON.stringify(ids)}`,
-          provenance: 'CALIBRATION_ONLY',
-        })
-      }
-    }
-  }
-  return out.sort((a, b) => (a.clearanceId < b.clearanceId ? -1 : a.clearanceId > b.clearanceId ? 1 : 0))
+  return TEST_KINSHIP_RECORDS.map(r => {
+    const ids = [r.personId, supportingCandidateId(r.cohortId, r.ordinal)].sort() as [string, string]
+    return { clearanceId: `multi-house:kinship-check:${JSON.stringify(ids)}`, personIds: ids,
+      countryId: 'country-eldia', checkedYear: 1250, validUntilYear: 1280,
+      sourceEvidenceId: r.record, provenance: 'CALIBRATION_ONLY' }
+  })
 }
+/** 探索対象の試験設定。証拠とは独立した入力であり、選択自体は禁親の承認ではない。 */
+const MULTI_HOUSE_CANDIDATE_PAIRS: readonly (readonly [Id, Id])[] = Object.freeze([
+  ['person-exp-02', supportingCandidateId('multi-house:initial:west:1232:female', 0)],
+  ['person-exp-02', supportingCandidateId('multi-house:initial:east:1228:female', 0)],
+  ['person-exp-03', supportingCandidateId('multi-house:initial:west:1228:male', 0)],
+  ['person-exp-03', supportingCandidateId('multi-house:initial:east:1232:male', 0)],
+])
 /** 明示した初期関係値は無し。新規ペアの初期値はB-009の校正値(initialTrust+決定的な個体差)で与える。 */
 export const MULTI_HOUSE_TRUST_BASE: readonly PairTrustBase[] = Object.freeze([]) as readonly PairTrustBase[]
 
@@ -177,9 +166,9 @@ export function createMultiHouseEvaluators(startWorld: WorldState, ledger: reado
   return cfg.evaluators
 }
 
-/** 供給コホートと評価器へ渡す入力(評価器factoryとidentityが同じ値を使う)。 */
+/** 供給の絞り込みは法的証拠に依存しない。記録は禁親審査の承認を意味しない。 */
 function supportingInput(): B001SupportingInput {
-  return { cohorts: MULTI_HOUSE_SUPPORTING_COHORTS, ...MULTI_HOUSE_SUPPORTING_LIMITS, kinshipClearances: MULTI_HOUSE_SUPPORTING_CLEARANCES }
+  return { cohorts: MULTI_HOUSE_SUPPORTING_COHORTS, ...MULTI_HOUSE_SUPPORTING_LIMITS, candidatePairs: MULTI_HOUSE_CANDIDATE_PAIRS }
 }
 
 /** 主試遊の実行条件。seedと介入ledgerは構成identityには含めない(A側の別キーで識別する)。 */
@@ -204,7 +193,7 @@ export function multiHouseRunConfigIdentity(): Readonly<Record<string, unknown>>
     tuning: EXPERIMENTAL_TUNING,
     book: trial.book, laws: trial.laws,
     nextgenContract: MULTI_HOUSE_NEXTGEN_CONTRACT,
-    supporting: supportingInput(),
+    supporting: supportingInput(), supportingKinshipClearances: MULTI_HOUSE_SUPPORTING_CLEARANCES,
     trustBase: MULTI_HOUSE_TRUST_BASE,
     autonomy: MULTI_HOUSE_AUTONOMY, b009: MULTI_HOUSE_B009_CALIBRATION,
     spouseDeathDissolution: true,

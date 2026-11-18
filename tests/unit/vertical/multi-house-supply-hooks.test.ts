@@ -92,6 +92,12 @@ describe('B-001 kinshipClearances（証拠付き候補だけを個別化）', ()
     expect(three).toHaveLength(3) // 上限3なら1名だけ追加
     expect(new Set(three).size).toBe(3)
   })
+  it('探索対象の選択は証拠とは独立し、選択のみで審査を承認しない', () => {
+    expect(recorded(run({ candidatePairs: [['person-exp-02', id(1)]] })).map(p => p.personId)).toEqual([id(1)])
+    expect(recorded(run({ candidatePairs: [] }))).toHaveLength(0)
+    expect(recorded(run({ candidatePairs: [['person-exp-02', id(1)]], kinshipClearances: [] }))).toHaveLength(0)
+    expect(createB001SupportingMarriageEvaluator({ ...base, candidatePairs: [['person-exp-02']] } as never).ok).toBe(false)
+  })
   it('不正な上限値は評価器を作らない', () => {
     for (const bad of [0, 9, 1.5]) {
       expect(createB001SupportingMarriageEvaluator({ ...base, maxOpenCandidatesPerSeeker: bad } as never).ok).toBe(false)

@@ -23,6 +23,8 @@ export type B001SupportingInput = Readonly<{
    * 禁親審査そのものは緩和しない(審査はB-005/A-LEG-01が従来どおり再実施)。未指定は従来動作。
    */
   kinshipClearances?: readonly SupportingKinshipClearance[]
+  /** 個別化の探索対象だけを指定する。法的証拠ではなく審査結果を変更しない。 */
+  candidatePairs?: readonly (readonly [Id, Id])[]
   /** 任意。kinshipClearances指定時に、1人の探索者へ同時に保持する証拠付き未婚候補の上限(1〜8)。 */
   maxOpenCandidatesPerSeeker?: number
 }>
@@ -40,7 +42,9 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
       !validNumber(input.perCohortSamples, 1, 16) ||
       !validNumber(input.maximumPreviewAge, 18, 100) ||
       (input.maxOpenCandidatesPerSeeker !== undefined && !validNumber(input.maxOpenCandidatesPerSeeker, 1, 8)) ||
-      (input.kinshipClearances !== undefined && validateSupportingKinshipClearances(input.kinshipClearances).length > 0))
+      (input.kinshipClearances !== undefined && validateSupportingKinshipClearances(input.kinshipClearances).length > 0) ||
+      (input.candidatePairs !== undefined && (!Array.isArray(input.candidatePairs) || input.candidatePairs.some(p =>
+        !Array.isArray(p) || p.length !== 2 || p.some(id => typeof id !== 'string' || !id)))))
     return {ok:false,issues:['INVALID_SUPPORTING_REGISTRATION_CALIBRATION']}
   const cohorts = structuredClone(input.cohorts) as SupportingMarriageCohort[]
   const settings = Object.freeze({
@@ -55,6 +59,8 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
     const k = JSON.stringify(c.personIds)
     clearanceByPair.set(k, [...(clearanceByPair.get(k) ?? []), c])
   }
+  const candidatePairs = input.candidatePairs === undefined ? undefined : new Set(input.candidatePairs.map(p => JSON.stringify(p)))
+  const selected = (a: Id, b: Id) => candidatePairs === undefined || candidatePairs.has(JSON.stringify([a, b]))
   const evidenceBacked = input.kinshipClearances !== undefined
   // B-005/A-LEG-01(reviewSupportingKinshipClearance)と同じ厳しさ: 管轄一致・当年有効・ちょうど1件のときだけ。
   const cleared = (a: Id, b: Id, year: number, countryId: Id | undefined): boolean =>
@@ -102,14 +108,14 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
       }
       if (evidenceBacked && settings.maxOpenCandidatesPerSeeker !== undefined) {
         const open = world.persons.filter(p => p.alive && p.interactionRole === 'SUPPORTING' &&
-          !married.has(p.personId) && p.sex !== seeker.sex && cleared(seeker.personId, p.personId, ctx.year, seekerCountry)).length
+          !married.has(p.personId) && p.sex !== seeker.sex && selected(seeker.personId, p.personId) && cleared(seeker.personId, p.personId, ctx.year, seekerCountry)).length
         if (open >= settings.maxOpenCandidatesPerSeeker) {
           defer(seeker.personId, 'OPEN_EVIDENCE_BACKED_CANDIDATES_AT_LIMIT')
           continue
         }
       }
       const supplied = proposeSupportingMarriageCandidates(world, seeker.personId, eligibleCohorts, {
-        ...(evidenceBacked ? { candidateFilter: (c: { candidateId: Id }) => cleared(seeker.personId, c.candidateId, ctx.year, seekerCountry) } : {}),
+        ...((evidenceBacked || candidatePairs !== undefined) ? { candidateFilter: (c: { candidateId: Id }) => selected(seeker.personId, c.candidateId) && (!evidenceBacked || cleared(seeker.personId, c.candidateId, ctx.year, seekerCountry)) } : {}),
         seed: ctx.seed,
         maxCandidates: 1,
         perCohortSamples: settings.perCohortSamples,
