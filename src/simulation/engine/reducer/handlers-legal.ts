@@ -15,12 +15,20 @@ import type {
 } from '../../contracts/index.ts'
 import type { Handler } from './draft.ts'
 import { fail, findPerson, findTitle, requireAlivePerson } from './draft.ts'
+import { personSupportingRecord } from './handlers-person.ts'
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 
 export const marriageRegister: Handler<MarriageRegisterCommand> = (d, c) => {
-  const w = d.world
   const m = c.marriage
+  if (c.supportingPerson !== undefined) {
+    if (!m.personIds.includes(c.supportingPerson.person.personId)) {
+      return fail('INVALID_COMMAND', '補助人物は婚姻の当事者でなければなりません')
+    }
+    const rejection = personSupportingRecord(d, c.supportingPerson)
+    if (rejection) return rejection
+  }
+  const w = d.world
   if (m.status !== 'ACTIVE') return fail('INVALID_COMMAND', '登録する婚姻の status は ACTIVE のみです')
   if (m.registeredYear !== w.year) return fail('YEAR_MISMATCH', `registeredYear ${m.registeredYear} が当年 ${w.year} ではありません`)
   const [a, b] = m.personIds

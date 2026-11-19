@@ -103,6 +103,9 @@ export function checkCommandAuthority(
       (s.sourceRuleId !== 'A-TIT-07' || s.phase !== 4)) {
     return reject('WRITE_OWNER_VIOLATION', '死亡統治者の未確定化はA-TIT-07のPhase4でのみ実行できます')
   }
+  if (c.type === 'MARRIAGE_REGISTER' && c.supportingPerson !== undefined && s.sourceRuleId !== 'A-LEG-01') {
+    return reject('WRITE_OWNER_VIOLATION', '成立時の補助人物を伴う婚姻登録はA-LEG-01のみが実行できます')
+  }
   if (c.type === 'MARRIAGE_DISSOLVE' && s.sourceRuleId !== 'A-LEG-01') {
     return reject('WRITE_OWNER_VIOLATION', '婚姻終了はA-LEG-01のみが確定します')
   }

@@ -157,6 +157,8 @@ function marriageResponseError(o: RuleOutcome, queries: readonly MarriageQuery[]
       accepts++
       if (matching.length !== 1 || matching[0]?.type !== 'MARRIAGE_REGISTER') return 'ACCEPTの婚姻登録commandがありません'
       const c = matching[0]
+      // 候補出典とB-005/A-LEG審査を結び付ける第2段階まで、年次経路では使用させない。
+      if (c.supportingPerson !== undefined) return '成立時の補助人物登録は法的審査経路との接続が未実装です'
       if (c.marriage.personIds[0] !== q.payload.personIds[0] || c.marriage.personIds[1] !== q.payload.personIds[1] ||
           c.source.sourceTraceId !== traceId(o.traceDrafts.indexOf(ts[0]!))) {
         return '婚姻登録commandの対象・Trace参照が照会と一致しません'
