@@ -24,8 +24,7 @@ def export_part(kind, top_half_width):
     # Winding points outward, including the underside.
     faces = [(3, 2, 1, 0), (4, 5, 6, 7), (0, 1, 5, 4),
              (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete(use_global=False)
+    bpy.ops.object.select_all(action="DESELECT")
     mesh = bpy.data.meshes.new(kind)
     mesh.from_pydata(bottom + top, [], faces)
     mesh.update()
@@ -42,5 +41,8 @@ def export_part(kind, top_half_width):
 
 
 OUTPUT.mkdir(parents=True, exist_ok=True)
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
 export_part("block", 0.5)
 export_part("taper", 0.3)
+bpy.ops.wm.save_as_mainfile(filepath=str(OUTPUT / "parts.blend"))
