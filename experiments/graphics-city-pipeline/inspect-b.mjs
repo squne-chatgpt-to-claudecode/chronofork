@@ -1,4 +1,4 @@
-/* global process, console, window */
+/* global process, console, window, URL */
 // C0部分検査。A/B比較や人間による評価ではない。
 import { chromium } from '@playwright/test'
 const browser = await chromium.launch({ headless: true })
