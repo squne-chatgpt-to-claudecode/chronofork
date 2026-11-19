@@ -46,8 +46,16 @@ function makeView(label: string, factory: Factory) {
 }
 
 async function start() {
-  const blender = await loadBlenderParts()
-  const a = makeView('経路 A', blender)
+  let a: ReturnType<typeof makeView> | undefined
+  try {
+    const blender = await loadBlenderParts()
+    a = makeView('経路 A', blender)
+  } catch (error) {
+    const message = document.createElement('p')
+    message.textContent = `経路 A は未表示です（GLB の読込み失敗）。`
+    views.append(message)
+    console.error(error)
+  }
   const b = makeView('経路 B', createDirectBuilding)
   Object.assign(window, { experiment: { a, b, city } })
 }
