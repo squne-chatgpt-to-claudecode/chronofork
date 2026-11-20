@@ -1,6 +1,8 @@
 // DEC-061: A/B共通の補助婚姻候補向け禁親確認証拠（試験用技術契約）。
 // 人口コホートや家門ラベルは血縁の無関係さを証明しない。
-import type {Id, WorldState, Year} from '../contracts/index.ts'
+import type {Id, Person, WorldState, Year} from '../contracts/index.ts'
+import { marriageCandidatePersons } from './nextgen-marriage.ts'
+import { canonicalize } from '../engine/reducer/canonical.ts'
 
 export type SupportingKinshipClearance=Readonly<{
   clearanceId:Id
@@ -13,7 +15,7 @@ export type SupportingKinshipClearance=Readonly<{
 }>
 export type SupportingKinshipStatus=
   | Readonly<{status:'CLEARED';reasonCode:'SUPPORTING_KINSHIP_REVIEW_MATCHED';clearanceId:Id|null}>
-  | Readonly<{status:'DEFER';reasonCode:'SUPPORTING_KINSHIP_CLEARANCE_MISSING'|'SUPPORTING_KINSHIP_CLEARANCE_AMBIGUOUS'}>
+  | Readonly<{status:'DEFER';reasonCode:'SUPPORTING_KINSHIP_CLEARANCE_MISSING'|'SUPPORTING_KINSHIP_CLEARANCE_AMBIGUOUS'|'CANDIDATE_VIEW_INVALID'|'PERSON_UNKNOWN'}>
 
 export function validateSupportingKinshipClearances(
   clearances:readonly SupportingKinshipClearance[],
@@ -36,17 +38,26 @@ export function validateSupportingKinshipClearances(
   return issues
 }
 
+// 相互順位の母集団と法的再審査で同じ証拠を使う。台帳の並び順は評価に影響しない。
+export const supportingClearanceKey = (records: readonly SupportingKinshipClearance[]): string =>
+  JSON.stringify(records.map(canonicalize).sort())
+
 /** 記録済み近親照合とは別の証拠境界。Bで相互順位構築前、Aで法的登録前に同じ条件を検査する。 */
 export function reviewSupportingKinshipClearance(
   world:WorldState,pair:readonly [Id,Id],countryId:Id,year:Year,
-  clearances:readonly SupportingKinshipClearance[],
+  clearances:readonly SupportingKinshipClearance[],candidates:readonly Person[]=[],
+  populationEvidenceIds:readonly Id[]=[],
 ):SupportingKinshipStatus{
-  if(!pair.some(id=>world.persons.find(p=>p.personId===id)?.interactionRole==='SUPPORTING'))
+  const persons=marriageCandidatePersons(world,pair,candidates)
+  if(!persons)return {status:'DEFER',reasonCode:'CANDIDATE_VIEW_INVALID'}
+  if(pair.some(id=>!persons.some(p=>p.personId===id)))
+    return {status:'DEFER',reasonCode:'PERSON_UNKNOWN'}
+  if(!pair.some(id=>persons.find(p=>p.personId===id)?.interactionRole==='SUPPORTING'))
     return {status:'CLEARED',reasonCode:'SUPPORTING_KINSHIP_REVIEW_MATCHED',clearanceId:null}
   const matching=clearances.filter(c=>
     c.personIds[0]===pair[0]&&c.personIds[1]===pair[1]&&
     c.countryId===countryId&&c.checkedYear<=year&&year<c.validUntilYear)
-  if(matching.length===0)
+  if(matching.length===0 || (matching.length===1 && populationEvidenceIds.includes(matching[0]!.sourceEvidenceId)))
     return {status:'DEFER',reasonCode:'SUPPORTING_KINSHIP_CLEARANCE_MISSING'}
   if(matching.length>1)
     return {status:'DEFER',reasonCode:'SUPPORTING_KINSHIP_CLEARANCE_AMBIGUOUS'}

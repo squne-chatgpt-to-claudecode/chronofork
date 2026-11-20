@@ -140,6 +140,14 @@ const MULTI_HOUSE_CANDIDATE_PAIRS: readonly (readonly [Id, Id])[] = Object.freez
 /** 明示した初期関係値は無し。新規ペアの初期値はB-009の校正値(initialTrust+決定的な個体差)で与える。 */
 export const MULTI_HOUSE_TRUST_BASE: readonly PairTrustBase[] = Object.freeze([]) as readonly PairTrustBase[]
 
+/** 未登録ペアに限るCALIBRATION_ONLYの関係値。探索対象・禁親台帳の有無から信頼を導出しない。 */
+const MULTI_HOUSE_CANDIDATE_TRUST_BASE: readonly PairTrustBase[] = [
+  { personIds: MULTI_HOUSE_CANDIDATE_PAIRS[0]!, value: 40 },
+  { personIds: MULTI_HOUSE_CANDIDATE_PAIRS[1]!, value: 35 },
+  { personIds: MULTI_HOUSE_CANDIDATE_PAIRS[2]!, value: 35 },
+  { personIds: MULTI_HOUSE_CANDIDATE_PAIRS[3]!, value: 40 },
+]
+
 export const MULTI_HOUSE_SUPPORTING_CLEARANCES: readonly SupportingKinshipClearance[] = Object.freeze(buildClearances())
 
 /** C004匿名出生履歴を空から蓄積させる初期世界。重要人物は初期8人のまま増やさない。 */
@@ -159,6 +167,7 @@ export function createMultiHouseEvaluators(startWorld: WorldState, ledger: reado
     reviewedLegal: { book: trial.book, ordinaryLaws: trial.laws },
     spouseDeathDissolution: true,
     supportingMarriage: supportingInput(),
+    supportingCandidateTrustBase: MULTI_HOUSE_CANDIDATE_TRUST_BASE,
     autonomy: MULTI_HOUSE_AUTONOMY,
     b009Calibration: MULTI_HOUSE_B009_CALIBRATION,
   })
@@ -194,7 +203,7 @@ export function multiHouseRunConfigIdentity(): Readonly<Record<string, unknown>>
     book: trial.book, laws: trial.laws,
     nextgenContract: MULTI_HOUSE_NEXTGEN_CONTRACT,
     supporting: supportingInput(), supportingKinshipClearances: MULTI_HOUSE_SUPPORTING_CLEARANCES,
-    trustBase: MULTI_HOUSE_TRUST_BASE,
+    trustBase: MULTI_HOUSE_TRUST_BASE, supportingCandidateTrustBase: structuredClone(MULTI_HOUSE_CANDIDATE_TRUST_BASE),
     autonomy: MULTI_HOUSE_AUTONOMY, b009: MULTI_HOUSE_B009_CALIBRATION,
     spouseDeathDissolution: true,
     ruleVersions: {

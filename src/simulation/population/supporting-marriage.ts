@@ -58,6 +58,24 @@ export type SupportingMarriageSupplyResult=
  | Readonly<{status:'PROPOSED';candidates:readonly SupportingMarriageCandidate[];reasonCodes:readonly string[]}>
  | Readonly<{status:'DEFER';candidates:readonly [];reasonCodes:readonly string[]}>
 
+/** 一回の評価に限定された読取専用ビュー。枝はスコープであり候補IDや乱数キーには混ぜない。 */
+export type SupportingMarriageCandidateView = Readonly<{
+  branchId: Id
+  year: Year
+  seekerId: Id
+  result: SupportingMarriageSupplyResult
+}>
+
+export function createSupportingMarriageCandidateView(
+  world: WorldState, scope: Readonly<{branchId: Id; year: Year; seekerId: Id}>,
+  cohorts: readonly SupportingMarriageCohort[], options: SupportingMarriageSupplyOptions,
+): SupportingMarriageCandidateView {
+  if (!scope.branchId || scope.year !== world.year) {
+    return {...scope, result:{status:'DEFER', candidates:[], reasonCodes:['CANDIDATE_VIEW_SCOPE_INVALID']}}
+  }
+  return {...scope, result:proposeSupportingMarriageCandidates(world,scope.seekerId,cohorts,options)}
+}
+
 const present=(v:unknown):v is string=>typeof v==='string'&&v.length>0
 const integer=(v:unknown):v is number=>typeof v==='number'&&Number.isSafeInteger(v)
 const cmp=(a:string,b:string)=>a<b?-1:a>b?1:0
@@ -83,7 +101,7 @@ export function validateSupportingMarriageCohorts(
   })
   for(const [i,c] of cohorts.entries()){
     if(!c||!present(c.cohortId)||!present(c.groupId)||!present(c.affiliationHouseId)||
-      !present(c.familyPoolId)||!present(c.sourceEvidenceId)||
+      !present(c.familyPoolId)||
       !['REGIONAL_UPPER_NOBILITY','REGIONAL_LOWER_NOBILITY'].includes(c.tier)||
       !['MALE','FEMALE'].includes(c.sex)||
       !integer(c.birthYear)||!integer(c.memberCount)||c.memberCount<1||
@@ -92,6 +110,7 @@ export function validateSupportingMarriageCohorts(
       issues.push('COHORT_RECORD_INVALID:'+i)
       continue
     }
+    if(!present(c.sourceEvidenceId))issues.push('COHORT_SOURCE_EVIDENCE_MISSING:'+i)
     if(ids.has(c.cohortId))issues.push('COHORT_ID_DUPLICATE:'+c.cohortId)
     ids.add(c.cohortId)
     const overlapKey=JSON.stringify([c.groupId,c.birthYear,c.sex,c.familyPoolId])
@@ -130,7 +149,8 @@ export function validateSupportingMarriageCohorts(
     const [groupId,year]=JSON.parse(key) as [Id,number]
     const backed=world.demographics.anonymousBirthHistory?.find(
       s=>s.groupId===groupId&&s.year===year)
-    if(!backed||count>backed.anonymousBirths)
+    // 履歴そのものの欠落は各行のBIRTH_BACKING_INSUFFICIENTで報告済み。
+    if(backed&&count>backed.anonymousBirths)
       issues.push('C004_SHARED_BIRTH_CAPACITY_EXCEEDED:'+key)
   }
   for(const [groupId,count] of allocatedByGroup){
@@ -200,6 +220,8 @@ export function proposeSupportingMarriageCandidates(
   }
   possible.sort((a,b)=>a.rank-b.rank||cmp(a.candidate.candidateId,b.candidate.candidateId))
   if(possible.length===0)return {status:'DEFER',candidates:[],reasonCodes:['NO_COHORT_CANDIDATE_AVAILABLE']}
-  return{status:'PROPOSED',candidates:possible.slice(0,options.maxCandidates).map(x=>x.candidate),
+  if(possible.length>options.maxCandidates)
+    return {status:'DEFER',candidates:[],reasonCodes:['SUPPORTING_CANDIDATE_BUDGET_EXCEEDED']}
+  return{status:'PROPOSED',candidates:possible.map(x=>x.candidate),
     reasonCodes:['POPULATION_COHORT_OFFERS_ONLY','LEGAL_KINSHIP_REVIEW_REQUIRED']}
 }

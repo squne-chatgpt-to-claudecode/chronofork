@@ -1,26 +1,25 @@
-// DEC-061 / Issue #83: PopulationGroupの少数の匿名候補をB-001でSUPPORTINGとして記録。
+// DEC-061: 未成立の候補は抽象ビューに留め、個別Personを記録しない。
 // 成立した婚姻・近親適格性・合法王朝帰属を推定せず、CALIBRATION_ONLYの候補供給のみ行う。
-import type { DecisionTraceDraft, Id, Person, PersonSupportingRecordCommand, RuleOutcome, WorldState } from '../../contracts/index.ts'
+import type { DecisionTraceDraft, Id, RuleOutcome, WorldState } from '../../contracts/index.ts'
 import type { EvaluationContext, RuleEvaluator } from '../../engine/evaluators.ts'
 import { EvaluationFailure } from '../../engine/evaluators.ts'
-import { proposeSupportingMarriageCandidates, validateSupportingMarriageCohorts } from '../../population/supporting-marriage.ts'
+import { createSupportingMarriageCandidateView, validateSupportingMarriageCohorts } from '../../population/supporting-marriage.ts'
 import type { SupportingMarriageCohort } from '../../population/supporting-marriage.ts'
 import { validateSupportingKinshipClearances } from '../../legal/supporting-kinship-clearance.ts'
 import type { SupportingKinshipClearance } from '../../legal/supporting-kinship-clearance.ts'
 
-export const B001_SUPPORTING_VERSION = 'b001-supporting-registration-0:CALIBRATION_ONLY'
+export const B001_SUPPORTING_VERSION = 'b001-supporting-candidates-1:CALIBRATION_ONLY'
 export type B001SupportingInput = Readonly<{
   cohorts: readonly SupportingMarriageCohort[]
   /** 1年の新規記録上限。全人口のPerson化をしない。 */
   maxRecordsPerYear: number
-  /** 記録済みの生存補助人物がこの値以上なら新たに抽出しない。 */
+  /** 成立時に適用する、記録済み生存補助人物の上限。抽象候補数の上限ではない。 */
   maxAliveSupporting: number
   perCohortSamples: number
   maximumPreviewAge: number
   /**
    * 任意。指定時は、人物ペア単位の禁親確認証拠(B-005/A-LEG-01が使う台帳と同じ入力。照合条件も同じ: 管轄一致・当年有効・ちょうど1件)が当年有効な
-   * 候補だけを個別化する。証拠の無い候補を記録して予算・生存枠を使い切ること(候補枯渇)を避けるだけで、
-   * 禁親審査そのものは緩和しない(審査はB-005/A-LEG-01が従来どおり再実施)。未指定は従来動作。
+   * 候補だけを提示する。禁親審査そのものは緩和しない(審査はB-005/A-LEG-01が再実施)。
    */
   kinshipClearances?: readonly SupportingKinshipClearance[]
   /** 個別化の探索対象だけを指定する。法的証拠ではなく審査結果を変更しない。 */
@@ -69,112 +68,98 @@ export function createB001SupportingMarriageEvaluator(input: B001SupportingInput
       .filter(c => c.countryId === countryId && c.checkedYear <= year && year < c.validUntilYear).length === 1
   const evaluator: RuleEvaluator = (world: WorldState, ctx: EvaluationContext): RuleOutcome => {
     if (ctx.ruleId !== 'B-001' || ctx.phase !== 3 || ctx.year !== world.year) {
-      throw new EvaluationFailure('B-001補助人物記録は当年フェーズ3に限ります',[
+      throw new EvaluationFailure('B-001補助人物候補の供給は当年フェーズ3に限ります',[
         {code:'RULE_MISMATCH',message:String(ctx.ruleId)}])
     }
     // まだ18歳に達していないC004コホートは、現在の年に出生/成人したことにしない。
     const eligibleCohorts=cohorts.filter(c=>ctx.year-c.birthYear>=18&&
       ctx.year-c.birthYear<=settings.maximumPreviewAge)
     const checked = validateSupportingMarriageCohorts(world, eligibleCohorts)
-    if (checked.length > 0) throw new EvaluationFailure('人口集団の補助人物出典が不整合',
-      checked.map(code => ({code,message:code})))
-    const active = world.persons.filter(p => p.alive && p.interactionRole === 'SUPPORTING').length
-    const used = new Set<Id>(world.persons.map(p => p.personId))
+    const evidenceMissing = new Set([
+      'COHORT_SOURCE_EVIDENCE_MISSING', 'C004_SURVIVOR_ATTESTATION_MISSING',
+      'C004_BIRTH_BACKING_INSUFFICIENT', 'C004_SHARED_BIRTH_CAPACITY_EXCEEDED',
+    ])
+    if (checked.some(code => !evidenceMissing.has(code.split(':', 1)[0]!))) {
+      throw new EvaluationFailure('人口集団の補助人物出典が不整合', checked.map(code => ({code,message:code})))
+    }
     const married = new Set(world.legal.marriages.filter(m => m.status === 'ACTIVE').flatMap(m => m.personIds))
     const seekers = world.persons
       .filter(p => p.alive && p.interactionRole !== 'SUPPORTING' &&
         !married.has(p.personId) && ctx.year - p.birthYear >= 18)
       .sort((a,b) => cmp(a.personId,b.personId))
     const traceDrafts: DecisionTraceDraft[] = []
-    const commands: PersonSupportingRecordCommand[] = []
-    const defer=(seekerId:Id, reasonCode:string)=>{
-      const key=JSON.stringify([ctx.year,seekerId,reasonCode])
+    const defer=(seekerId:Id, ...reasonCodes:string[])=>{
+      const key=JSON.stringify([ctx.year,seekerId,...reasonCodes])
       traceDrafts.push({
         year:ctx.year,phase:ctx.phase,ruleId:ctx.ruleId,
         actorRef:{kind:'PERSON',id:seekerId},
         candidates:[{candidateId:'b001:supporting:defer:'+key,eligible:false,
           inputs:{seekerPersonId:seekerId,provenance:'CALIBRATION_ONLY'},
-          reasonCodes:['CALIBRATION_ONLY',reasonCode]}],
-        status:'DEFER',reasonCodes:['CALIBRATION_ONLY','SUPPORTING_SUPPLY_DEFERRED',reasonCode],
+          reasonCodes:['CALIBRATION_ONLY',...reasonCodes]}],
+        status:'DEFER',reasonCodes:['CALIBRATION_ONLY','SUPPORTING_SUPPLY_DEFERRED',...reasonCodes],
         modifierIds:[],ruleVersion:B001_SUPPORTING_VERSION,
       })
     }
     for (const seeker of seekers) {
-      const seekerCountry = world.houses.find(h => h.houseId === seeker.houseId)?.countryId
-      if (commands.length >= settings.maxRecordsPerYear ||
-          active + commands.length >= settings.maxAliveSupporting){
-        defer(seeker.personId,'SUPPORTING_RECORD_BUDGET_EXCEEDED')
-        break
+      // 共通の出生枠を再配分せず、供給台帳全体を保留する。登録済み人物の審査は続行できる。
+      if (checked.length > 0) {
+        defer(seeker.personId, ...checked)
+        continue
       }
+      const seekerCountry = world.houses.find(h => h.houseId === seeker.houseId)?.countryId
+      let candidateBudget = 32
       if (evidenceBacked && settings.maxOpenCandidatesPerSeeker !== undefined) {
         const open = world.persons.filter(p => p.alive && p.interactionRole === 'SUPPORTING' &&
           !married.has(p.personId) && p.sex !== seeker.sex && selected(seeker.personId, p.personId) && cleared(seeker.personId, p.personId, ctx.year, seekerCountry)).length
-        if (open >= settings.maxOpenCandidatesPerSeeker) {
+        candidateBudget = settings.maxOpenCandidatesPerSeeker - open
+        if (candidateBudget <= 0) {
           defer(seeker.personId, 'OPEN_EVIDENCE_BACKED_CANDIDATES_AT_LIMIT')
           continue
         }
       }
-      const supplied = proposeSupportingMarriageCandidates(world, seeker.personId, eligibleCohorts, {
+      const supplied = createSupportingMarriageCandidateView(world, {branchId:ctx.branchId, year:ctx.year, seekerId:seeker.personId}, eligibleCohorts, {
         ...((evidenceBacked || candidatePairs !== undefined) ? { candidateFilter: (c: { candidateId: Id }) => selected(seeker.personId, c.candidateId) && (!evidenceBacked || cleared(seeker.personId, c.candidateId, ctx.year, seekerCountry)) } : {}),
         seed: ctx.seed,
-        maxCandidates: 1,
+        maxCandidates: candidateBudget,
         perCohortSamples: settings.perCohortSamples,
         maximumPreviewAge: settings.maximumPreviewAge,
-        usedCandidateIds: used,
-      })
+      }).result
       if (supplied.status !== 'PROPOSED') {
         defer(seeker.personId,supplied.reasonCodes[0]??'NO_COHORT_CANDIDATE_AVAILABLE')
         continue
       }
-      const candidate = supplied.candidates[0]!
+      for (const candidate of supplied.candidates) {
       const cohort = cohorts.find(c => c.cohortId === candidate.cohortId)!
-      // 候補IDは年・枝に依存しない。重複した個別化はWorldStateと使用済みIDで拒否する。
-      used.add(candidate.candidateId)
-      const person: Person = {
-        personId: candidate.candidateId,
-        name: '試験用補助人物 ' + candidate.cohortId + ' #' + candidate.ordinal,
-        interactionRole: 'SUPPORTING',
-        sex: candidate.sex, birthYear: candidate.birthYear, alive: true,
-        originGroupId: candidate.groupId, houseId: candidate.affiliationHouseId,
-        legalDynasty: { status: 'UNDETERMINED', reasonCodes: ['POPULATION_COHORT_NOT_A_DYNASTY_PROOF'] },
-      }
-      const key = JSON.stringify([ctx.year,candidate.candidateId])
-      const traceIndex = traceDrafts.length
+      // 同じ抽象候補を複数探索者に提示できる。記録予算は成立時に検証する。
+      const key = JSON.stringify([ctx.year,seeker.personId,candidate.candidateId])
+      // このTraceのラベルは診断情報であり、枝・出典・存命の証明ではない。
+      // 後続で使用する場合は当年のWorldStateと信頼できる入力から再導出・照合する必要がある。
       traceDrafts.push({
         year: ctx.year, phase: ctx.phase, ruleId: ctx.ruleId,
         actorRef: {kind:'GROUP',id:candidate.groupId},
         candidates: [{
           candidateId: 'b001:supporting:' + key, eligible: true,
           inputs: {
-            seekerPersonId: seeker.personId, supportingPersonId: person.personId,
-            cohortId: cohort.cohortId, familyPoolId: candidate.familyPoolId,
+            seekerPersonId: seeker.personId, supportingCandidateId: candidate.candidateId,
+            cohortId: cohort.cohortId, cohortSize: cohort.memberCount, familyPoolId: candidate.familyPoolId,
             memberOrdinal: candidate.ordinal, sourceEvidenceId: cohort.sourceEvidenceId,
             survivorAttestationId: cohort.survivorAttestationId??null,
+            candidateBranchId: ctx.branchId, candidateYear: ctx.year,
+            candidateGroupId: candidate.groupId, candidateHouseId: candidate.affiliationHouseId,
+            candidateSex: candidate.sex, candidateBirthYear: candidate.birthYear,
+            candidateTier: candidate.tier, populationSource: cohort.source,
             kinshipStatus: 'UNVERIFIED', provenance: 'CALIBRATION_ONLY',
+            maxRecordsPerYear: settings.maxRecordsPerYear, maxAliveSupporting: settings.maxAliveSupporting,
           },
-          reasonCodes: ['CALIBRATION_ONLY','SUPPORTING_RECORD_ONLY','NOT_MARRIAGE_APPROVAL'],
+          reasonCodes: ['CALIBRATION_ONLY','SUPPORTING_CANDIDATE_ONLY','NOT_MARRIAGE_APPROVAL'],
         }],
         selectedCandidateId: 'b001:supporting:' + key, status: 'ACCEPT',
-        reasonCodes: ['CALIBRATION_ONLY','SUPPORTING_RECORD_ONLY','NOT_MARRIAGE_APPROVAL'],
+        reasonCodes: ['CALIBRATION_ONLY','SUPPORTING_CANDIDATE_ONLY','NOT_MARRIAGE_APPROVAL'],
         modifierIds: [], ruleVersion: B001_SUPPORTING_VERSION,
       })
-      commands.push({
-        type: 'PERSON_SUPPORTING_RECORD',
-        commandId: 'cmd:b001:supporting:' + key,
-        source: {
-          requestId: 'req:b001:supporting:' + key,
-          year: ctx.year, phase: ctx.phase, sourceRuleId: 'B-001',
-          sourceTraceId: ctx.traceId(traceIndex),
-          sourceIntentId: cohort.sourceEvidenceId,
-        },
-        person, cohortId: cohort.cohortId, cohortSize: cohort.memberCount,
-        memberOrdinal: candidate.ordinal,
-        familyPoolId: cohort.familyPoolId,
-        sourceEvidenceId: cohort.sourceEvidenceId, birthBacking: cohort.source,
-        ...(cohort.survivorAttestationId?{survivorAttestationId:cohort.survivorAttestationId}:{}),
-      })
+      }
     }
-    return {ruleId: ctx.ruleId, phase: ctx.phase, commands,requests:[],deferred:[],traceDrafts}
+    return {ruleId: ctx.ruleId, phase: ctx.phase, commands:[],requests:[],deferred:[],traceDrafts}
   }
   return {ok:true,evaluator}
 }

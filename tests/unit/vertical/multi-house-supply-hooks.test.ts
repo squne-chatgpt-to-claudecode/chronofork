@@ -1,6 +1,6 @@
 // Issue #114 担当B: 複数家門試遊構成のために追加した、既定で従来動作のopt-in技術フック3件の専用テスト。
 //  1) supporting-marriage: candidateFilter（個別化前の絞り込みのみ。審査緩和・人口加算なし）
-//  2) B-001: kinshipClearances / maxOpenCandidatesPerSeeker（証拠のある候補だけ記録し候補枯渇を避ける）
+//  2) B-001: kinshipClearances / maxOpenCandidatesPerSeeker（証拠のある候補だけ提示し候補枯渇を避ける）
 //  3) B-009: initialTrustSpread（同点のため相互最優先が永久に成立しない状況を避ける決定的な個体差）
 // すべてCALIBRATION_ONLY。婚姻・出生の成否や相手は決めない。
 import { describe, expect, it } from 'vitest'
@@ -46,56 +46,59 @@ describe('supporting-marriage candidateFilter', () => {
   })
 })
 
-describe('B-001 kinshipClearances（証拠付き候補だけを個別化）', () => {
+describe('B-001 kinshipClearances（証拠付き候補だけを提示）', () => {
   const clearance = (ordinal: number, personId = 'person-exp-02'): SupportingKinshipClearance => ({
     clearanceId: 'hooks:clearance:' + personId + ':' + ordinal,
     personIds: [personId, id(ordinal)].sort() as [string, string], countryId: 'country-eldia',
     checkedYear: 1250, validUntilYear: 1260, sourceEvidenceId: 'hooks:lineage:' + ordinal, provenance: 'CALIBRATION_ONLY',
   })
   const base = { cohorts: [cohort], maxRecordsPerYear: 4, maxAliveSupporting: 8, perCohortSamples: 4, maximumPreviewAge: 60 }
-  const run = (extra: object) => {
-    const e = createB001SupportingMarriageEvaluator({ ...base, ...extra } as never)
+  const run = (extra: object, input = world) => {
+    const e = createB001SupportingMarriageEvaluator({ ...base, ...extra })
     if (!e.ok) throw new Error(e.issues.join(','))
-    return runYear(world, { seed: SEED, branchId: 'hooks', evaluators: { 'B-001': e.evaluator } })
+    const result = runYear(input, { seed: SEED, branchId: 'hooks', evaluators: { 'B-001': e.evaluator } })
+    if (result.status !== 'COMPLETED') throw new Error(JSON.stringify(result.halt))
+    expect(result.world.persons).toEqual(input.persons)
+    expect(result.events).toEqual([])
+    return result.traces.filter(t => t.ruleId === 'B-001')
   }
-  const recorded = (r: ReturnType<typeof run>) => (r as { world: typeof world }).world.persons
-    .filter(p => p.interactionRole === 'SUPPORTING')
+  const offered = (traces: ReturnType<typeof run>) => traces.filter(t => t.status === 'ACCEPT')
+    .map(t => t.candidates[0]?.inputs['supportingCandidateId'])
 
-  it('未指定は従来どおり(証拠の有無に関係なく個別化する)', () => {
-    expect(recorded(run({})).length).toBeGreaterThan(0)
+  it('未指定では禁親の承認をせずに候補だけを提示する', () => {
+    expect(new Set(offered(run({})))).toEqual(new Set([0, 1, 2, 3].map(id)))
   })
-  it('指定時は当年有効なペア証拠のある候補だけを個別化し、証拠が無ければ何も記録せずDEFER Traceを残す', () => {
-    const withEvidence = run({ kinshipClearances: [clearance(1)] })
-    const ids = recorded(withEvidence).map(p => p.personId)
-    expect(ids).toEqual([id(1)])
-    const without = run({ kinshipClearances: [] }) as { world: typeof world; decisionTraces?: { status: string; reasonCodes: string[] }[] }
-    expect(recorded(without as never)).toHaveLength(0)
-    const expired = run({ kinshipClearances: [{ ...clearance(1), checkedYear: 1240, validUntilYear: 1250 }] })
-    expect(recorded(expired)).toHaveLength(0)
+  it('明示指定時は当年有効なペア証拠のある候補だけを提示し、証拠がなければDEFER', () => {
+    expect(offered(run({ kinshipClearances: [clearance(1)] }))).toEqual([id(1)])
+    const without = run({ kinshipClearances: [] })
+    expect(offered(without)).toHaveLength(0)
+    expect(without.some(t => t.status === 'DEFER' && t.reasonCodes.includes('NO_COHORT_CANDIDATE_AVAILABLE'))).toBe(true)
+    expect(offered(run({ kinshipClearances: [{ ...clearance(1), checkedYear: 1240, validUntilYear: 1250 }] }))).toHaveLength(0)
   })
-  it('証拠付き未婚候補が探索者あたりの上限に達していれば新たに個別化しない', () => {
+  it('探索者あたりの上限に達していれば保留し、空きと標本予算があれば未使用候補を提示する', () => {
     const existing = [0, 1].map(n => ({
       personId: id(n), name: 'hooks supporting ' + n, interactionRole: 'SUPPORTING' as const, sex: 'FEMALE' as const,
       birthYear: 1230, alive: true, originGroupId: cohort.groupId, houseId: cohort.affiliationHouseId,
       legalDynasty: { status: 'UNDETERMINED' as const, reasonCodes: ['POPULATION_COHORT_NOT_A_DYNASTY_PROOF'] },
     }))
     const preloaded = { ...world, persons: [...world.persons, ...existing] }
-    const many = [0, 1, 2, 3].map(n => clearance(n))
-    const go = (limit: number) => {
-      const e = createB001SupportingMarriageEvaluator({ ...base, kinshipClearances: many, maxOpenCandidatesPerSeeker: limit })
-      if (!e.ok) throw new Error(e.issues.join(','))
-      const r = runYear(preloaded, { seed: SEED, branchId: 'hooks', evaluators: { 'B-001': e.evaluator } }) as { world: typeof world }
-      return r.world.persons.filter(p => p.interactionRole === 'SUPPORTING').map(p => p.personId)
-    }
-    expect(go(2)).toEqual([id(0), id(1)]) // すでに2名: 追加しない
-    const three = go(3)
-    expect(three).toHaveLength(3) // 上限3なら1名だけ追加
-    expect(new Set(three).size).toBe(3)
+    const kinshipClearances = [0, 1, 2, 3].map(n => clearance(n))
+    const full = run({ kinshipClearances, maxOpenCandidatesPerSeeker: 2 }, preloaded)
+    expect(offered(full)).toEqual([])
+    expect(full.some(t => t.status === 'DEFER' && t.reasonCodes.includes('OPEN_EVIDENCE_BACKED_CANDIDATES_AT_LIMIT'))).toBe(true)
+    const overflow = run({ kinshipClearances, maxOpenCandidatesPerSeeker: 3 }, preloaded)
+    expect(offered(overflow)).toEqual([])
+    expect(overflow.some(t => t.status === 'DEFER' && t.reasonCodes.includes('SUPPORTING_CANDIDATE_BUDGET_EXCEEDED'))).toBe(true)
+    const open = offered(run({ kinshipClearances, maxOpenCandidatesPerSeeker: 3, perCohortSamples: 1 }, preloaded))
+    expect(open).toHaveLength(1)
+    expect([id(2), id(3)]).toContain(open[0])
   })
   it('探索対象の選択は証拠とは独立し、選択のみで審査を承認しない', () => {
-    expect(recorded(run({ candidatePairs: [['person-exp-02', id(1)]] })).map(p => p.personId)).toEqual([id(1)])
-    expect(recorded(run({ candidatePairs: [] }))).toHaveLength(0)
-    expect(recorded(run({ candidatePairs: [['person-exp-02', id(1)]], kinshipClearances: [] }))).toHaveLength(0)
+    const picked = run({ candidatePairs: [['person-exp-02', id(1)]] })
+    expect(offered(picked)).toEqual([id(1)])
+    expect(picked.find(t => t.status === 'ACCEPT')?.candidates[0]?.inputs['kinshipStatus']).toBe('UNVERIFIED')
+    expect(offered(run({ candidatePairs: [] }))).toHaveLength(0)
+    expect(offered(run({ candidatePairs: [['person-exp-02', id(1)]], kinshipClearances: [] }))).toHaveLength(0)
     expect(createB001SupportingMarriageEvaluator({ ...base, candidatePairs: [['person-exp-02']] } as never).ok).toBe(false)
   })
   it('不正な上限値は評価器を作らない', () => {

@@ -73,7 +73,7 @@ function observe(seed: number, result: Run, ms: number) {
   for (const e of result.eventLog) {
     const d = String(Math.floor(e.year / 10) * 10)
     const x = (decades[d] ??= { supportingRecorded: 0, b001Defer: {}, marriages: 0, births: 0, deaths: 0 })
-    if (e.eventType === 'PERSON_SUPPORTING_RECORD') x.supportingRecorded++
+    if (e.eventType === 'MARRIAGE_REGISTER') x.supportingRecorded += e.supportingMarriageRegistrations?.length ?? 0
     if (e.eventType === 'MARRIAGE_REGISTER') x.marriages++
     if (e.eventType === 'PERSON_BIRTH') x.births++
     if (e.eventType === 'PERSON_DEATH') x.deaths++
@@ -94,7 +94,7 @@ function observe(seed: number, result: Run, ms: number) {
     const house = snap?.persons.find(p => p.personId === seeker)?.houseId ?? 'unknown'
     const key = `${t.year}:${house}`
     const row = supplyByYearHouse[key] ??= {}
-    const reason = t.ruleId === 'B-001' && t.status === 'ACCEPT' ? 'RECORDED' : `${t.ruleId}:${t.reasonCodes.at(-1)}`
+    const reason = t.ruleId === 'B-001' && t.status === 'ACCEPT' ? 'OFFERED' : `${t.ruleId}:${t.reasonCodes.at(-1)}`
     row[reason] = (row[reason] ?? 0) + 1
   }
   return {
@@ -104,7 +104,8 @@ function observe(seed: number, result: Run, ms: number) {
     persons: { total: recs.length, byOrigin: Object.fromEntries(['INITIAL_KEY', 'POPULATION_SUPPORTING', 'AUTONOMOUS_BIRTH', 'OTHER']
       .map(o => [o, recs.filter(r => r.origin === o).length])) },
     events: { marriages: count('MARRIAGE_REGISTER'), births: count('PERSON_BIRTH'), deaths: count('PERSON_DEATH'),
-      supportingRecorded: count('PERSON_SUPPORTING_RECORD'), titleTransfers: count('LEGAL_TITLE_TRANSFER') },
+      supportingRecorded: result.eventLog.filter(e => e.eventType === 'MARRIAGE_REGISTER')
+        .flatMap(e => e.supportingMarriageRegistrations ?? []).length, titleTransfers: count('LEGAL_TITLE_TRANSFER') },
     maxGeneration: Math.max(...recs.map(r => gen(r.personId))),
     byHouse: houses, reasons, decades,
     technicalGoal: result.technicalGoal?.status ?? null,
@@ -361,7 +362,11 @@ describe('主試遊seed 1250〜1350: 世代更新と不変条件（実計算）'
     const final = result.snapshots.at(-1)!
     const count = (t: string) => result.eventLog.filter(e => e.eventType === t).length
     expect(count('PERSON_BIRTH')).toBe(final.persons.filter(p => p.personId.startsWith('person:b002')).length)
-    expect(count('PERSON_SUPPORTING_RECORD')).toBe(final.persons.filter(p => p.interactionRole === 'SUPPORTING').length)
+    const registrations = result.eventLog.filter(e => e.eventType === 'MARRIAGE_REGISTER')
+      .flatMap(e => e.supportingMarriageRegistrations ?? [])
+    expect(registrations.map(r => r.registration.person.personId).sort())
+      .toEqual(final.persons.filter(p => p.interactionRole === 'SUPPORTING').map(p => p.personId).sort())
+    expect(count('PERSON_SUPPORTING_RECORD')).toBe(0)
     expect(count('PERSON_DEATH')).toBe(final.persons.filter(p => !p.alive).length)
     expect(count('MARRIAGE_REGISTER')).toBe(final.legal.marriages.length)
     // 各出生Eventは同年のB-002 ACCEPT Traceと対応する
@@ -431,7 +436,8 @@ describe('固定seedの追加観測(成功例を選ばない・少数)', () => {
         if (clause) expect(child.legalDynasty).toMatchObject({ status: 'DETERMINED', dynastyId: clause.dynastyId })
         else expect(child.legalDynasty.status).toBe('UNDETERMINED')
       }
-      expect(result.eventLog.filter(e => e.eventType === 'PERSON_SUPPORTING_RECORD')).toHaveLength(final.persons.filter(p => p.interactionRole === 'SUPPORTING').length)
+      expect(result.eventLog.filter(e => e.eventType === 'MARRIAGE_REGISTER').flatMap(e => e.supportingMarriageRegistrations ?? []))
+        .toHaveLength(final.persons.filter(p => p.interactionRole === 'SUPPORTING').length)
       expect(result.eventLog.filter(e => e.eventType === 'MARRIAGE_REGISTER')).toHaveLength(final.legal.marriages.length)
       expect(final.persons.filter(p => p.personId.startsWith('person:b002')).length)
         .toBe(result.eventLog.filter(e => e.eventType === 'PERSON_BIRTH').length)

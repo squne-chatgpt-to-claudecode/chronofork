@@ -75,7 +75,7 @@ describe('成立時の補助人物と婚姻の原子的登録', () => {
     expect(r.world).toEqual(w)
     if (r.status === 'HALTED') {
       expect(r.halt.code).toBe('INVALID_OUTCOME')
-      expect(r.halt.message).toContain('接続が未実装')
+      expect(r.halt.message).toContain('当年・当枝のB-001候補供給から再導出できません')
     }
   })
   it('A-LEG-01以外には成立時の補助人物登録を許可しない', () => {

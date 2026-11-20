@@ -12,6 +12,8 @@ export type EvaluationContext = Readonly<{
   branchId: Id
   /** 当年に確定した自分より前の判断。法的状態ではなく読取専用の因果証拠。 */
   priorTraces?: readonly DecisionTrace[]
+  /** B-001評価直前のエンジン所有スナップショット。候補再導出専用。 */
+  supportingCandidateSnapshot?: Readonly<{branchId: Id; year: Year; world: WorldState}>
   /** B-005からA-LEG-01へ同年に配送される法的婚姻照会。 */
   marriageQueries?: readonly Extract<CrossDomainRequest, { kind: 'LEGAL_MARRIAGE_QUERY' }>[]
   /** traceDrafts[draftIndex] に対応する traceId。Command/Request の source.sourceTraceId に使う。 */
