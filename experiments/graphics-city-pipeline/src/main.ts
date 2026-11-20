@@ -117,13 +117,18 @@ async function start() {
   }
   const b = makeView('経路 B', createDirectBuilding, setCameraState)
   let currentCity = city
-  function setCity(next: City) { currentCity = next; a?.setCity(next); b?.setCity(next) }
+  let order: 'ab' | 'ba' = 'ab'
+  function setOrder(next: 'ab' | 'ba') { order = next }
+  function eachView(fn: (view: ReturnType<typeof makeView>) => void) {
+    for (const view of order === 'ab' ? [a, b] : [b, a]) if (view) fn(view)
+  }
+  function setCity(next: City) { currentCity = next; eachView(view => view.setCity(next)) }
   function updateBuilding(building: Building) {
     const index = currentCity.buildings.findIndex(item => item.id === building.id)
     currentCity = { ...currentCity, buildings: index < 0 ? [...currentCity.buildings, building] : currentCity.buildings.map((item, i) => i === index ? building : item) }
-    a?.updateBuilding(building); b?.updateBuilding(building)
+    eachView(view => view.updateBuilding(building))
   }
   setCity(city); setCameraState(cameraState)
-  Object.assign(window, { experiment: { a, b, get city() { return currentCity }, setCity, updateBuilding, getCameraState: () => ({ position: [...cameraState.position], target: [...cameraState.target], zoom: cameraState.zoom }), setCameraState } })
+  Object.assign(window, { experiment: { a, b, get city() { return currentCity }, setCity, updateBuilding, setOrder, getCameraState: () => ({ position: [...cameraState.position], target: [...cameraState.target], zoom: cameraState.zoom }), setCameraState } })
 }
 start().catch(error => { const p = document.createElement('p'); p.textContent = `読込みエラー: ${String(error)}`; document.body.append(p); console.error(error) })
