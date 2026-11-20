@@ -1,6 +1,16 @@
 # 実験記録（途中・比較判定保留）
 
-## 2026-11-20 再開時の環境導入
+## 2026-11-20 実 Blender 起動・生成（C0 基準）
+
+- C0: **PASS**（限定された共通契約の最低品質）。独立担当が 10:27:10〜10:29:25 JST に実画面・全60棟の閉じた三角形メッシュ・外形・体積と橋の接触を検査。橋端に最大約 0.212 都市単位の段差があるが、契約は面一を求めていない。`c0-independent-bridge.png` は橋の拡大画像。文字のフォント欠落は残る。C1〜C3 と人間の評価を意味しない。
+
+
+- 追加承認後、Ubuntu noble の `libsm6` / `libice6` を公式パッケージから取得。APT metadata の SHA-256 とそれぞれ `1d27ebc381b499075a28c504be4d7d424c63b6866354736ac7f8d25813860cdf`、`ad1edb5303574fee154e487947177e5bd15363aa71b92f78f5a2a7145fdb81c5` の一致を確認してユーザーローカル `/home/squne/.local/opt/chronofork-blender-libs.GxcyFo8m` に展開。システムへインストールしていない。
+- `LD_LIBRARY_PATH` を上記の `usr/lib/x86_64-linux-gnu` に指定して実行した `--version` は Blender 5.2.4 LTS、build hash `cd5dc428cce1` を表示。10:26:19 JST に `--background --python route-a/generate.py` を開始し、終了コード 0、壁時計 1.84 秒。これは環境導入でも初期制作時間でもない。
+- 初回生成 hash: `block.glb` = `a0c143a6d89388a4b257cfdb8f4d39cc5a9530797deb0ee135642721bf887df7`、`taper.glb` = `7671d77822dc839b567d8fdcfd2cce0eb94382a8eef0f0c675bec75acbfff701`、`parts.blend` = `41d58c9d19a2821d4e7c1cc37889d4c6792f66680276e479aad92ebc8cd84356`。
+- 基準・別配置の A/B 共通ブラウザ実体検査は checked 4、failures 0、pending 0。独立担当による基準画面の画像 `c0-independent-comparison.png` は同一カメラ `[28,32,36]`、target `[0,1,0]`、zoom 1 で取得。SHA-256 `39890ab1c9bcfa11173f6be13bd5b2f5bba6c238f3e8ad623c3f35a0fe6da702`。画像環境に日本語フォントがなく文字は欠落。これは C0 freeze を単独で代替しない。
+
+## 2026-11-20 再開時の環境導入（履歴）
 
 - 承認された Blender 5.2.4 Linux x64 の [公式アーカイブ](https://download.blender.org/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz) と [公式 SHA-256](https://download.blender.org/release/Blender5.2/blender-5.2.4.sha256) を 09:50:00〜09:51:01 JST に取得。対象ファイルの公式値と実測値は共に `2fd14c50987426897ba60237ee996edf2b4151f4b1a72a460ca20be58c1d2d86` で一致。
 - 展開先の実行ファイルは `/home/squne/.local/opt/chronofork-blender-5.2.4.uUPgtwDV/blender-5.2.4-linux-x64/blender`。09:51:43 JST の `--version` は終了コード 127、`libSM.so.6` と `libICE.so.6` が見つからず起動失敗。実行による版の確認、バックグラウンド実行、GLB と .blend 生成はいずれも **UNVERIFIED**。

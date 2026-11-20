@@ -19,6 +19,14 @@ B の部分検査は `npx playwright install chromium` で対応ブラウザを�
 
 ## 状態
 
-公式 Blender 5.2.4 のアーカイブはチェックサム照合済みですが、実行環境で `libSM.so.6` と `libICE.so.6` が不足し起動していません。詳細は `STATUS.md`。Blender を用いた生成、A/B 共通画面での C0 合格、C1〜C3 は未実施です。生成器や画面は実生成・比較検査の代用にはなりません。
+公式 Blender 5.2.4 のアーカイブをチェックサム照合し、追加承認を受けた不足ライブラリをローカルに用意して GLB と .blend を生成しました。生成の経緯・実測 hash は `STATUS.md`。C0 の合否や C1〜C3 は別途検査・記録します。生成器や画面は実生成・比較検査の代用にはなりません。
+
+生成例（Blender と不足ライブラリの配置先は環境に応じて変更）:
+
+```sh
+LD_LIBRARY_PATH=/home/squne/.local/opt/chronofork-blender-libs.GxcyFo8m/usr/lib/x86_64-linux-gnu \
+  /home/squne/.local/opt/chronofork-blender-5.2.4.uUPgtwDV/blender-5.2.4-linux-x64/blender \
+  --background --python route-a/generate.py
+```
 
 共通実体検査はサーバー起動後に `CITY_URL=http://127.0.0.1:5173/ node inspect-c0.mjs` を実行します。A 未表示など未検査を含む場合は終了コード 2、検査失敗は 1 です。この検査だけでは面の閉鎖性・橋面の完全な接合・視覚品質を保証しません。
