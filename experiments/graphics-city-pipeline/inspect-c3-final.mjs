@@ -19,7 +19,7 @@ try {
   report.bDist = Object.fromEntries(await Promise.all((await readdir(join(temp, 'node_modules/.cache/city-dist/assets'))).map(async name => [name, await hash(join(temp, 'node_modules/.cache/city-dist/assets', name))])))
   if (JSON.stringify(report.originalBefore) !== JSON.stringify(report.originalAfter)) report.failures.push('original assets changed')
   const server = await startC3Server(temp)
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch({ headless: true }).catch(error => { server.kill(); throw error })
   try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 1 })
     page.on('pageerror', error => report.failures.push(String(error)))
