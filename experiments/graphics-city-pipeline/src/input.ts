@@ -1,5 +1,5 @@
 // 比較専用の仮入力。ゲーム状態とは無関係。
-export type Kind = 'block' | 'taper'
+export type Kind = 'block' | 'taper' | 'tiered'
 export interface Building { id: string; district: string; kind: Kind; x: number; y: number; z: number; width: number; depth: number; height: number; affiliation: string }
 export interface District { id: string; x: number; y: number; z: number; width: number; depth: number }
 export interface City { districts: District[]; buildings: Building[]; bridge: { from: [number, number, number]; to: [number, number, number]; width: number } }
