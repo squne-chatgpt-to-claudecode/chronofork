@@ -1,13 +1,13 @@
+/* global window, structuredClone, process */
+import { startC3Server } from './c3-server.mjs'
 import { chromium } from '@playwright/test'
-import { spawn } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const root=dirname(fileURLToPath(import.meta.url)), previous=JSON.parse(await readFile(join(root,'c3-final-results.json'))), temp=previous.temporaryCopy
 const report={started:new Date().toISOString(), sourceResults:'c3-final-results.json', temporaryCopy:temp, failures:[], pending:[]}
-const server=spawn(process.execPath,[join(temp,'node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port','5198','--strictPort'],{cwd:temp,stdio:'ignore'})
+const server=await startC3Server(temp)
 try {
-  for(let i=0;i<100;i++){try{if((await fetch('http://127.0.0.1:5198/')).ok)break}catch{} await new Promise(r=>setTimeout(r,100))}
   const browser=await chromium.launch({headless:true})
   try {
     const page=await browser.newPage({viewport:{width:1400,height:900},deviceScaleFactor:1})

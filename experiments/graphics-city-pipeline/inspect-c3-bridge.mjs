@@ -1,13 +1,13 @@
+/* global window, process */
+import { startC3Server } from './c3-server.mjs'
 import { chromium } from '@playwright/test'
-import { spawn } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const root=dirname(fileURLToPath(import.meta.url)), previous=JSON.parse(await readFile(join(root,'c3-results.json'))), temp=previous.temporaryCopy
-const server=spawn(process.execPath,[join(temp,'node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port','5198','--strictPort'],{cwd:temp,stdio:'ignore'})
+const server=await startC3Server(temp)
 const result={started:new Date().toISOString(),source:'c3-results.json',failures:[],pending:[]}
 try {
- for(let i=0;i<100;i++){try{if((await fetch('http://127.0.0.1:5198/')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
  const browser=await chromium.launch({headless:true});try {
   const page=await browser.newPage({viewport:{width:1400,height:900}});await page.goto('http://127.0.0.1:5198/',{waitUntil:'networkidle'});await page.waitForFunction(()=>window.experiment?.a&&window.experiment?.b)
   result.measurements=await page.evaluate(async city=>{

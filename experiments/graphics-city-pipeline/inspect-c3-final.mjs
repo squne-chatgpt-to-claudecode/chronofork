@@ -1,10 +1,10 @@
+/* global window, structuredClone, process, URL */
+import { startC3Server } from './c3-server.mjs'
 import { chromium } from '@playwright/test'
-import { mkdtemp, cp, mkdir, symlink, readdir, readFile, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
-import { spawn, spawnSync } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 const root = dirname(fileURLToPath(import.meta.url)), prior = JSON.parse(await readFile(join(root, 'c3-results.json'))), temp = prior.temporaryCopy
 const report = { started: new Date().toISOString(), temporaryCopy: temp, processes: [], failures: [], pending: [] }
@@ -18,8 +18,7 @@ try {
   report.regenerated = Object.fromEntries(await Promise.all(assets.map(async name => [name, await hash(join(temp, 'public/a', name))])))
   report.bDist = Object.fromEntries(await Promise.all((await readdir(join(temp, 'node_modules/.cache/city-dist/assets'))).map(async name => [name, await hash(join(temp, 'node_modules/.cache/city-dist/assets', name))])))
   if (JSON.stringify(report.originalBefore) !== JSON.stringify(report.originalAfter)) report.failures.push('original assets changed')
-  const server = spawn(process.execPath, [join(temp, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '5198', '--strictPort'], { cwd: temp, stdio: 'ignore' })
-  for (let i = 0; i < 100; i++) { try { const response = await fetch('http://127.0.0.1:5198/'); if (response.ok) break } catch {} await new Promise(resolve => setTimeout(resolve, 100)) }
+  const server = await startC3Server(temp)
   const browser = await chromium.launch({ headless: true })
   try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 1 })
