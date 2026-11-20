@@ -3,7 +3,7 @@
 From the experiment directory:
     blender --background --python route-a/generate.py
 
-The output is public/a/{block,taper}.glb. Blender's glTF exporter converts
+The output is public/a/{block,taper,tiered}.glb. Blender's glTF exporter converts
 Z-up coordinates to glTF Y-up, placing each part's base at the origin.
 """
 
@@ -24,9 +24,13 @@ def export_part(kind, top_half_width):
     # Winding points outward, including the underside.
     faces = [(3, 2, 1, 0), (4, 5, 6, 7), (0, 1, 5, 4),
              (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+    export_mesh(kind, bottom + top, faces)
+
+
+def export_mesh(kind, vertices, faces):
     bpy.ops.object.select_all(action="DESELECT")
     mesh = bpy.data.meshes.new(kind)
-    mesh.from_pydata(bottom + top, [], faces)
+    mesh.from_pydata(vertices, [], faces)
     mesh.update()
     obj = bpy.data.objects.new(kind, mesh)
     bpy.context.scene.collection.objects.link(obj)
@@ -45,4 +49,16 @@ bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
 export_part("block", 0.5)
 export_part("taper", 0.3)
+# Four horizontal rings: ground, outer ledge, inner ledge, and roof.
+rings = [(-0.5, 0), (-0.5, 0.7), (-0.275, 0.7), (-0.275, 1)]
+vertices = []
+for lo, z in rings:
+    hi = -lo
+    vertices.extend([(lo, lo, z), (hi, lo, z), (hi, hi, z), (lo, hi, z)])
+faces = [(3, 2, 1, 0), (12, 13, 14, 15)]
+for lower in (0, 4, 8):
+    for i in range(4):
+        j = (i + 1) % 4
+        faces.append((lower + i, lower + j, lower + 4 + j, lower + 4 + i))
+export_mesh("tiered", vertices, faces)
 bpy.ops.wm.save_as_mainfile(filepath=str(OUTPUT / "parts.blend"))

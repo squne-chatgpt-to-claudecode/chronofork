@@ -30,3 +30,7 @@ LD_LIBRARY_PATH=/home/squne/.local/opt/chronofork-blender-libs.GxcyFo8m/usr/lib/
 ```
 
 共通実体検査はサーバー起動後に `CITY_URL=http://127.0.0.1:5173/ node inspect-c0.mjs` を実行します。A 未表示など未検査を含む場合は終了コード 2、検査失敗は 1 です。この検査だけでは面の閉鎖性・橋面の完全な接合・視覚品質を保証しません。
+
+## 入力と更新
+
+実験入力の型と初期値は `src/input.ts`。ブラウザで初期化完了後、`window.experiment.city` から現在の入力を読み、複製して `window.experiment.setCity(city)` に渡すと両画面へ反映されます。建物1棟は `window.experiment.updateBuilding(building)` で変更できます。比較用カメラは `window.experiment.setCameraState({ position: [28,32,36], target: [0,1,0], zoom: 1 })` で指定し、`getCameraState()` で取得します。これらは実験専用APIであり本体の WorldState ではありません。
