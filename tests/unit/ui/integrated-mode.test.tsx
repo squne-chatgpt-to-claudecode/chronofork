@@ -1,17 +1,20 @@
 // @vitest-environment jsdom
 // 統合法制・世代継続(experimental)モードの軽量回帰。100年の実計算は integrated-mode-long.test.ts(オプトイン)で行う。
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it , beforeEach} from 'vitest'
 import App from '../../../src/ui/App.tsx'
 import { INTEGRATED_PLAY_DEFAULTS, interventionTargetIssue, playModeLabel, runPlayComparison } from '../../../src/ui/branch-play-source.ts'
 import type { PlayComparison, PlayInput, PlayView } from '../../../src/ui/branch-play-source.ts'
-import { buildOverview, titleRows } from '../../../src/ui/integrated-overview.ts'
+import { buildOverview, EVENT_CATEGORIES, inCategory, isObservationFocusEvent, titleRows } from '../../../src/ui/integrated-overview.ts'
+import { reasonView } from '../../../src/ui/observation/reason-labels.ts'
 import type { PlayOutcome, PlayRunner } from '../../../src/ui/play-runner.ts'
 import { IntegratedOverview } from '../../../src/ui/IntegratedOverview.tsx'
 import { toDisplayView } from '../../../src/ui/play-view.ts'
 import { INTEGRATED_PAIR, INTEGRATED_SEED, INTEGRATED_TRUST_REDUCTION, createExperimentalIntegratedTimelineOptions } from '../../../src/scenario/experimental/index.ts'
 import type { DecisionTrace, EventLogEntry } from '../../../src/simulation/contracts/index.ts'
 
+
+beforeEach(()=>window.history.replaceState({},'', '/?entry=legacy'))
 afterEach(cleanup)
 
 describe('統合モードの初期入力例(CALIBRATION_ONLY)', () => {
@@ -123,6 +126,69 @@ describe('buildOverview: 差が無いときは差が確認されないと判定�
   })
 })
 
+describe('補助人物の婚姻登録イベント', () => {
+  const supporting = EVENT_CATEGORIES.find(c => c.key === 'supporting')!
+  const marriage = EVENT_CATEGORIES.find(c => c.key === 'marriage')!
+  const registered = { ...ev('registered', 'MARRIAGE_REGISTER', []), supportingMarriageRegistrations: [{
+    commandId: 'cmd', requestId: 'req', sourceTraceId: 'trace', marriageId: 'marriage', registration: {},
+  }] } as unknown as EventLogEntry
+
+  it('実イベントを婚姻と補助人物の両方に分類し、旧形式も維持する', () => {
+    expect(inCategory(registered, supporting)).toBe(true)
+    expect(inCategory(registered, marriage)).toBe(true)
+    expect(isObservationFocusEvent(registered)).toBe(true)
+    expect(inCategory(ev('old', 'PERSON_SUPPORTING_RECORD', []), supporting)).toBe(true)
+    expect(inCategory(ev('ordinary', 'MARRIAGE_REGISTER', []), supporting)).toBe(false)
+    expect(inCategory({ ...registered, supportingMarriageRegistrations: [] }, supporting)).toBe(false)
+    const overview = buildOverview(synthetic([[], []], [[registered], []]))
+    expect(overview.totalDifferences).toBe(1)
+    expect(overview.rows.find(r => r.category.key === 'supporting')?.a1Only).toEqual([registered])
+    expect(overview.rows.find(r => r.category.key === 'marriage')?.a1Only).toEqual([registered])
+  })
+  it('登録Eventの片側のみ・両側別IDの差分を双方向に数える', () => {
+    const other = { ...registered, eventId: 'other' }
+    for (const [a0, a1] of [[[registered], []], [[], [registered]], [[registered], [other]], [[other], [registered]]]) {
+      const overview = buildOverview(synthetic([a0, []], [a1, []]))
+      const row = overview.rows.find(r => r.category.key === 'supporting')!
+      expect(row.a0Only).toEqual(a0)
+      expect(row.a1Only).toEqual(a1)
+      expect(overview.totalDifferences).toBe(a0.length + a1.length)
+    }
+  })
+  it('分類外から分類内への変更と逆方向もそれぞれ一件と数える', () => {
+    const outside = ev('same', 'OTHER', [])
+    const inside = ev('same', 'MARRIAGE_REGISTER', [])
+    for (const [a0, a1] of [[outside, inside], [inside, outside]]) {
+      expect(buildOverview(synthetic([[a0], []], [[a1], []])).totalDifferences).toBe(1)
+    }
+  })
+  it('登録情報の追加・除去はいずれも補助人物行の変更として示す', () => {
+    const without = { ...registered, supportingMarriageRegistrations: [] }
+    for (const [a0, a1] of [[registered, without], [without, registered]]) {
+      const overview = buildOverview(synthetic([[a0], []], [[a1], []]))
+      expect(overview.totalDifferences).toBe(1)
+      expect(overview.rows.find(r => r.category.key === 'supporting')?.changed).toEqual([a1])
+    }
+  })
+  it('信頼基礎値の不足を判断保留として示す', () => {
+    expect(reasonView(['NO_BASE_TRUST'])).toEqual({ labels: ['2人の信頼基礎値が記録されていないため、候補の判断を保留'], unclassified: [] })
+  })
+  it('確定Bの候補・登録・禁親・権限の保留理由を区別する', () => {
+    const view = reasonView(['SUPPORTING_CANDIDATE_BUDGET_EXCEEDED', 'SUPPORTING_REGISTRATION_BUDGET_EXCEEDED',
+      'SUPPORTING_KINSHIP_CLEARANCE_MISMATCH', 'AUTHORITY_RECORD_MISSING'])
+    expect(view.unclassified).toEqual([])
+    expect(view.labels).toEqual([
+      expect.stringContaining('候補数が上限'), expect.stringContaining('登録枠を超える'),
+      expect.stringContaining('禁親確認'), expect.stringContaining('権限の記録がない'),
+    ])
+  })
+  it('候補提示と承認の区別を理由に表示する', () => {
+    const view = reasonView(['SUPPORTING_CANDIDATE_ONLY', 'NOT_MARRIAGE_APPROVAL', 'OPEN_EVIDENCE_BACKED_CANDIDATES_AT_LIMIT'])
+    expect(view.unclassified).toEqual([])
+    expect(view.labels).toEqual(['補助人物の候補を提示したのみ', '婚姻の承認ではない', '確認記録のある未婚の補助人物候補が上限に達している'])
+  })
+})
+
 describe('表示文言: 保持者未確定・統治委任・省略の説明', () => {
   const world = (holder: unknown, cases: unknown[], mandates: unknown[]) => ({
     year: 1350, persons: [], groups: [], regions: [{ regionId: 'r1', name: '北部' }],
@@ -189,7 +255,7 @@ describe('App: 統合モードの選択・実行・キャンセル', () => {
     expect(field('branch-duration')).toBe('5')
     expect(field('branch-person-one')).toBe('person-exp-02')
     expect(field('branch-person-two')).toBe('person-exp-05')
-    expect((screen.getByLabelText(/seed/) as HTMLInputElement).value).toBe('20260101')
+    expect((screen.getByTestId('seed-input') as HTMLInputElement).value).toBe('20260101')
     // 入力は変更できる(初期例は強制ではない)。
     fireEvent.change(screen.getByTestId('branch-trust-delta'), { target: { value: '-35' } })
     expect(field('branch-trust-delta')).toBe('-35')

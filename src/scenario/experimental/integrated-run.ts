@@ -10,6 +10,8 @@ import { EXPERIMENTAL_NEXTGEN_CONTRACT } from '../../simulation/legal/nextgen-co
 import type { NextgenContractCalibration } from '../../simulation/legal/nextgen-contract.ts'
 import { EXPERIMENTAL_B009_CALIBRATION } from '../../simulation/rules/b/index.ts'
 import type { B001PromotionInput } from '../../simulation/rules/b/index.ts'
+import { B001_SUPPORTING_VERSION } from '../../simulation/rules/b/b001-supporting-marriage.ts'
+import { B005_NEXTGEN_VERSION } from '../../simulation/rules/b/b005-nextgen.ts'
 import { childIdForMarriageYear } from '../../simulation/rules/b/b002-worldstate.ts'
 import { ordinaryMarriageIdForPairYear } from '../../simulation/rules/a/aleg01-ordinary.ts'
 import type { SupportingKinshipClearance } from '../../simulation/rules/a/index.ts'
@@ -95,6 +97,11 @@ export const INTEGRATED_TRUST_BASE: readonly PairTrustBase[] = Object.freeze([
   Object.freeze({ personIds: Object.freeze([...INTEGRATED_PAIR] as [string, string]), value: 80 }),
 ]) as readonly PairTrustBase[]
 
+/** 未登録候補のペアに限る独立した試験信頼値。法的適格性や婚姻成立の証拠ではない。 */
+export const INTEGRATED_SUPPORTING_CANDIDATE_TRUST_BASE: readonly PairTrustBase[] = Object.freeze([
+  Object.freeze({ personIds: Object.freeze([INTEGRATED_WITNESSED_SON_ID, INTEGRATED_SUPPORTING_PERSON_ID] as [string, string]), value: 35 }),
+]) as readonly PairTrustBase[]
+
 /** 比較用介入: P2/P5の信頼のみ -20 / 1250〜1254。出生・婚姻・相続の成功を固定しない。 */
 export const INTEGRATED_TRUST_REDUCTION: StatModifier = Object.freeze({
   modifierId: 'trial:issue71:pair-trust-minus-20',
@@ -121,6 +128,7 @@ export function createExperimentalIntegratedEvaluators(
   const trial = createExperimentalOrdinaryLegalTrial()
   const cfg = createAutonomousCalibrationEvaluators({
     branchStartWorld: startWorld, ledger, trustBase: INTEGRATED_TRUST_BASE,
+    supportingCandidateTrustBase: INTEGRATED_SUPPORTING_CANDIDATE_TRUST_BASE,
     nextgenMarriage: {
       book: trial.book, laws: trial.laws, calibration: INTEGRATED_NEXTGEN_CONTRACT,
       supportingKinshipClearances: INTEGRATED_SUPPORTING_CLEARANCES,
@@ -146,9 +154,11 @@ export function integratedRunConfigIdentity(): Readonly<Record<string, unknown>>
   return {
     book: trial.book, laws: trial.laws,
     nextgenContract: INTEGRATED_NEXTGEN_CONTRACT, supportingClearances: INTEGRATED_SUPPORTING_CLEARANCES,
-    trustBase: INTEGRATED_TRUST_BASE, promotion: INTEGRATED_PROMOTION,
+    trustBase: INTEGRATED_TRUST_BASE, supportingCandidateTrustBase: INTEGRATED_SUPPORTING_CANDIDATE_TRUST_BASE,
+    promotion: INTEGRATED_PROMOTION,
     supporting: { cohorts: INTEGRATED_SUPPORTING_COHORTS, ...INTEGRATED_SUPPORTING_LIMITS },
     autonomy: INTEGRATED_AUTONOMY, b009: INTEGRATED_B009_CALIBRATION,
+    ruleVersions: { b001Supporting: B001_SUPPORTING_VERSION, b005: B005_NEXTGEN_VERSION },
     spouseDeathDissolution: true,
   }
 }

@@ -12,7 +12,7 @@ import { evaluateGoal } from '../../../src/simulation/goal.ts'
 import { EXPERIMENTAL_NALVEN_GOAL } from '../../../src/scenario/experimental/index.ts'
 import { compareYear, runPlayComparison } from '../../../src/ui/branch-play-source.ts'
 import type { PlayInput } from '../../../src/ui/branch-play-source.ts'
-import { buildOverview } from '../../../src/ui/integrated-overview.ts'
+import { buildOverview, lineageRows } from '../../../src/ui/integrated-overview.ts'
 import { toDisplayView } from '../../../src/ui/play-view.ts'
 
 const longTest = process.env.CHRONOFORK_LONG_INTEGRATED_UI === '1' ? describe : describe.skip
@@ -69,23 +69,40 @@ longTest('統合モード: UIアダプタと直接実行の同一性(100年・�
     }
   })
 
-  it('PR #78 の連鎖(1278年SUPPORTING登録→B-005合意→婚姻→B-002出生)を同じ実行で含む', () => {
+  it('1278年の候補は通常の判断を経た婚姻成立時にのみ個別化される', () => {
     if (!c) throw new Error('adapter failed')
     for (const [label, r] of [['A0', c.a0], ['A1', c.a1]] as const) {
       const events = r.result.eventLog
-      const supporting = events.filter(e => e.eventType.split('+').includes('PERSON_SUPPORTING_RECORD'))
-      expect(supporting.map(e => e.year), label).toEqual([1278])
+      const supporting = events.filter(e => e.supportingMarriageRegistrations?.some(x => x.registration.person.personId === INTEGRATED_SUPPORTING_PERSON_ID))
+      expect(supporting, label).toHaveLength(1)
+      const registrationYear = supporting[0]!.year
+      expect(registrationYear, label).toBeGreaterThanOrEqual(1278)
+      expect(supporting.every(e => e.eventType.split('+').includes('MARRIAGE_REGISTER')), label).toBe(true)
+      expect(events.some(e => e.eventType.split('+').includes('PERSON_SUPPORTING_RECORD')), label).toBe(false)
+      expect(r.result.snapshots.filter(w => w.year <= registrationYear).every(w => !w.persons.some(p => p.personId === INTEGRATED_SUPPORTING_PERSON_ID)), label).toBe(true)
       const finalWorld = r.result.snapshots.at(-1)!
       const person = finalWorld.persons.find(p => p.personId === INTEGRATED_SUPPORTING_PERSON_ID)
       expect(person?.interactionRole, label).toBe('SUPPORTING')
-      // 1278年以降にSUPPORTINGを含むB-005合意がある(婚姻成立は固定せず、実Traceの存在だけ見る)。
-      const b005 = r.result.decisionTraces.filter(t => t.ruleId === 'B-005' && t.year >= 1278 &&
-        t.actorRef.kind === 'PERSON_PAIR' && t.actorRef.ids.includes(INTEGRATED_SUPPORTING_PERSON_ID))
-      expect(b005.length, label).toBeGreaterThan(0)
+      const registrationEvent = supporting[0]!
+      const registration = registrationEvent.supportingMarriageRegistrations!.find(x => x.registration.person.personId === INTEGRATED_SUPPORTING_PERSON_ID)!
+      const legalTrace = r.result.decisionTraces.find(t => t.traceId === registration.sourceTraceId)
+      expect(registrationEvent.sourceTraceIds, label).toContain(registration.sourceTraceId)
+      expect(legalTrace, label).toMatchObject({ ruleId: 'A-LEG-01', status: 'ACCEPT', year: registrationYear })
+      expect(legalTrace?.eventIds, label).toContain(registrationEvent.eventId)
+      const marriage = r.result.snapshots.find(w => w.year === registrationYear + 1)?.legal.marriages.find(m => m.marriageId === registration.marriageId)
+      expect(marriage?.supportingPopulationEvidenceIds, label).toEqual([registration.registration.sourceEvidenceId, registration.registration.survivorAttestationId])
+      const agreement = r.result.decisionTraces.find(t => `evidence:nextgen-agreement:${t.traceId}` === marriage?.contract?.evidenceId)
+      expect(agreement, label).toMatchObject({ ruleId: 'B-005', status: 'ACCEPT', year: registrationYear, actorRef: { kind: 'PERSON_PAIR', ids: marriage?.personIds } })
+      const births = events.filter(e => e.eventType.split('+').includes('PERSON_BIRTH'))
+      const recordedChildren = new Set(births.flatMap(e => e.stateChanges.flatMap(change =>
+        change.before === null && change.path.startsWith('$.persons[') && change.after && typeof change.after === 'object' && 'personId' in change.after
+          ? [change.after.personId] : [])))
+      expect(new Set(lineageRows(r.initialWorld, finalWorld).map(p => p.personId)), label).toEqual(recordedChildren)
+      expect(recordedChildren, label).not.toContain(INTEGRATED_SUPPORTING_PERSON_ID)
       const count = (type: string) => events.filter(e => e.eventType.split('+').includes(type)).length
       console.info('CHRONOFORK_INTEGRATED_UI_COUNTS=' + JSON.stringify({ branch: label,
         marriage: count('MARRIAGE_REGISTER'), birth: count('PERSON_BIRTH'), death: count('PERSON_DEATH'),
-        dissolve: count('MARRIAGE_DISSOLVE'), supporting: count('PERSON_SUPPORTING_RECORD'),
+        dissolve: count('MARRIAGE_DISSOLVE'), supporting: supporting.length,
         titleTransfer: count('LEGAL_TITLE_TRANSFER'), mandate: count('CONTROL_MANDATE_SET'),
         pendingSuccession1350: finalWorld.legal.cases.filter(x => x.kind === 'SUCCESSION' && x.status === 'PENDING').length,
         goal: r.result.technicalGoal?.status, events: events.length, traces: r.result.decisionTraces.length }))

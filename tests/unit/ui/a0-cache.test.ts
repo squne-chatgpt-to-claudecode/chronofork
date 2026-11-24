@@ -4,6 +4,9 @@ import { runPlayComparison } from '../../../src/ui/branch-play-source.ts'
 import type { PlayInput } from '../../../src/ui/branch-play-source.ts'
 import { SingleA0Cache, isUsableA0Entry } from '../../../src/ui/a0-cache.ts'
 import { integratedRunConfigIdentity, INTEGRATED_AUTONOMY, INTEGRATED_TRUST_BASE, INTEGRATED_B009_CALIBRATION, INTEGRATED_SUPPORTING_CLEARANCES } from '../../../src/scenario/experimental/index.ts'
+import { INTEGRATED_SUPPORTING_CANDIDATE_TRUST_BASE } from '../../../src/scenario/experimental/integrated-run.ts'
+import { B001_SUPPORTING_VERSION } from '../../../src/simulation/rules/b/b001-supporting-marriage.ts'
+import { B005_NEXTGEN_VERSION } from '../../../src/simulation/rules/b/b005-nextgen.ts'
 import type { PlayProgress } from '../../../src/ui/play-progress.ts'
 
 const BASE: PlayInput = { mode: 'ORDINARY_LAW', seed: 20260101, year: 1260, firstPersonId: 'person-exp-04', secondPersonId: 'person-exp-05', signedDelta: -20, durationYears: 5 }
@@ -92,6 +95,8 @@ describe('A0キャッシュ', () => {
     // identityは実行構成の定数そのもの(手書き複製ではない)から導出される。
     expect(parsed.autonomy).toEqual(JSON.parse(JSON.stringify(INTEGRATED_AUTONOMY)))
     expect(parsed.trustBase).toEqual(JSON.parse(JSON.stringify(INTEGRATED_TRUST_BASE)))
+    expect(parsed.supportingCandidateTrustBase).toEqual(JSON.parse(JSON.stringify(INTEGRATED_SUPPORTING_CANDIDATE_TRUST_BASE)))
+    expect(parsed.ruleVersions).toEqual({ b001Supporting: B001_SUPPORTING_VERSION, b005: B005_NEXTGEN_VERSION })
     expect(parsed.b009).toEqual(JSON.parse(JSON.stringify(INTEGRATED_B009_CALIBRATION)))
     expect(parsed.supportingClearances).toEqual(JSON.parse(JSON.stringify(INTEGRATED_SUPPORTING_CLEARANCES)))
   })

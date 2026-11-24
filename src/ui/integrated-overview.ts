@@ -2,8 +2,9 @@
 import type { EventLogEntry, Id, Person, WorldState } from '../simulation/contracts/index.ts'
 import type { PlayView } from './branch-play-source.ts'
 import { descendantDepths } from './dynasty-continuity.ts'
-import { describeEvent, shortPersonName } from './event-summary.ts'
+import { describeEvent, eventPersonRecords, unresolvedLabel } from './event-summary.ts'
 import type { EventNames } from './event-summary.ts'
+import { personDisplayNames } from './observation/person-display.ts'
 
 export type EventCategory=Readonly<{key:string;label:string;types:readonly string[]}>
 export const EVENT_CATEGORIES:readonly EventCategory[]=Object.freeze([
@@ -14,11 +15,16 @@ export const EVENT_CATEGORIES:readonly EventCategory[]=Object.freeze([
   {key:'dissolve',label:'婚姻の終了（配偶者の死亡）',types:['MARRIAGE_DISSOLVE']},
   {key:'dynasty',label:'法的王朝の確定',types:['LEGAL_DYNASTY_SET']},
   {key:'case',label:'相続審査の記録',types:['LEGAL_CASE_SET']},
-  {key:'title',label:'土地Titleの移転',types:['LEGAL_TITLE_TRANSFER']},
+  {key:'title',label:'称号の移転（王位・領地）',types:['LEGAL_TITLE_TRANSFER']},
+  {key:'ruler',label:'国家統治者の更新・未確定化',types:['COUNTRY_RULER_SET','COUNTRY_RULER_VACATE']},
   {key:'mandate',label:'統治委任の設定',types:['CONTROL_MANDATE_SET']},
 ])
 const typesOf=(e:EventLogEntry)=>e.eventType.split('+')
-export const inCategory=(e:EventLogEntry,c:EventCategory)=>typesOf(e).some(t=>c.types.includes(t))
+export const inCategory=(e:EventLogEntry,c:EventCategory)=>
+  (c.key==='supporting' && (e.supportingMarriageRegistrations?.length??0)>0) || typesOf(e).some(t=>c.types.includes(t))
+/** 原史探索の最初の一覧: 大量の補助人物登録は表示しないが、全Eventを保持・再表示可能にする。 */
+export const isObservationFocusEvent=(e:EventLogEntry)=>
+  EVENT_CATEGORIES.some(c=>c.key!=='supporting'&&inCategory(e,c))
 
 export type CategoryRow=Readonly<{
   category:EventCategory
@@ -44,16 +50,17 @@ export function buildOverview(v:PlayView):IntegratedOverview{
     const a0=e0.filter(e=>inCategory(e,category)),a1=e1.filter(e=>inCategory(e,category))
     const a1Only=a1.filter(e=>!m0.has(e.eventId))
     const a0Only=a0.filter(e=>!m1.has(e.eventId))
-    const changed=a1.filter(e=>{const o=m0.get(e.eventId);return o!==undefined&&o!==e&&JSON.stringify(o)!==JSON.stringify(e)})
+    const changed=e1.filter(e=>{const o=m0.get(e.eventId);return o!==undefined&&(inCategory(e,category)||inCategory(o,category))&&o!==e&&JSON.stringify(o)!==JSON.stringify(e)})
     return {category,a0,a1,a1Only,a0Only,changed}
   })
-  // 分類外のEventも差分の有無には含める(全期間のEvent差分。省略された同一Eventは差分ではない)。
-  const outsideDiff=[...e1.filter(e=>!m0.has(e.eventId)),...e0.filter(e=>!m1.has(e.eventId))]
-    .filter(e=>!EVENT_CATEGORIES.some(c=>inCategory(e,c))).length+
-    e1.filter(e=>{const o=m0.get(e.eventId);return o!==undefined&&o!==e&&!EVENT_CATEGORIES.some(c=>inCategory(e,c))&&JSON.stringify(o)!==JSON.stringify(e)}).length
+  // カテゴリへの重複所属や分類の変化に関わらず、実EventのIDごとに一度だけ数える。
   const diffIds=new Set<string>()
-  for(const r of rows)for(const e of [...r.a1Only,...r.a0Only,...r.changed])diffIds.add(e.eventId)
-  const totalDifferences=outsideDiff+diffIds.size
+  for(const e of e0)if(!m1.has(e.eventId))diffIds.add(e.eventId)
+  for(const e of e1){
+    const old=m0.get(e.eventId)
+    if(!old || (old!==e && JSON.stringify(old)!==JSON.stringify(e)))diffIds.add(e.eventId)
+  }
+  const totalDifferences=diffIds.size
   const f0=v.a0.result.snapshots.at(-1),f1=v.a1.result.snapshots.at(-1)
   const finalWorldIdentical=f0&&f1&&f0.year===f1.year?JSON.stringify(f0)===JSON.stringify(f1):null
   const mid=v.modifier.modifierId
@@ -61,18 +68,26 @@ export function buildOverview(v:PlayView):IntegratedOverview{
   return {rows,totalDifferences,finalWorldIdentical,interventionTraces:{a0:used(v.a0),a1:used(v.a1)}}
 }
 
-/** 最終snapshotから引いた表示名。無い参照は「参照不明」とせずIDをそのまま返す。 */
+/** 最終snapshotから引いた表示名。無い参照はundefined（表示側でunresolvedLabelへ）。 */
 export function namesOf(w:WorldState|undefined):EventNames{
+  const person=personDisplayNames(w?.persons??[])
   return {
-    person:id=>{const p=w?.persons.find(x=>x.personId===id);return p?shortPersonName(p.name):undefined},
+    person,
     group:id=>w?.groups.find(g=>g.groupId===id)?.name,
     dynasty:id=>w?.legal.dynasties.find(d=>d.dynastyId===id)?.name,
+    country:id=>w?.countries.find(c=>c.countryId===id)?.name,
   }
+}
+/** 年初snapshotと、同じ年の確定Eventで出生・登録した人物を同じ集合で識別する。 */
+export function namesOfYear(w:WorldState|undefined,events:readonly EventLogEntry[]):EventNames{
+  const base=namesOf(w)
+  const people=eventPersonRecords(w ? events.filter(e=>e.year===w.year) : events)
+  return people.length===0 ? base : {...base,person:personDisplayNames([...people,...(w?.persons??[])])}
 }
 export function eventHeadline(e:EventLogEntry,names:EventNames,typeLabel:string):string{
   const d=describeEvent(e,names)
   if(d)return d.headline
-  const people=e.involvedRefs.flatMap(r=>r.kind==='PERSON'?[names.person(r.id)??r.id]:r.kind==='PERSON_PAIR'?r.ids.map(i=>names.person(i)??i):[])
+  const people=e.involvedRefs.flatMap(r=>r.kind==='PERSON'?[names.person(r.id)??unresolvedLabel('person',r.id)]:r.kind==='PERSON_PAIR'?r.ids.map(i=>names.person(i)??unresolvedLabel('person',i)):[])
   return `${typeLabel}（${e.year}年）${people.length>0?' '+people.join('・'):''}`
 }
 
@@ -80,16 +95,18 @@ export type LineageRow=Readonly<{
   personId:Id;name:string;birthYear:number;generation:number;
   father:string;mother:string;dynasty:string;alive:boolean
 }>
-/** 1250年に存在しなかった人物の実親子関係と法的王朝帰属。世代は実在する親子辺だけから数える。 */
+/** 観測中の出生で記録された実親子関係と法的王朝帰属。世代は実在する親子辺だけから数える。 */
 export function lineageRows(initial:WorldState,final:WorldState|undefined):readonly LineageRow[]{
   if(!final)return []
   const initialIds=new Set(initial.persons.map(p=>p.personId))
   const depths=descendantDepths(initial,final.persons)
   const names=namesOf(final)
-  const parent=(id:Id|undefined)=>id===undefined?'記録なし':names.person(id)??id
-  const dyn=(p:Person)=>p.legalDynasty.status==='DETERMINED'?names.dynasty(p.legalDynasty.dynastyId)??p.legalDynasty.dynastyId:'未確定'
-  return final.persons.filter(p=>!initialIds.has(p.personId)&&p.birthYear>=initial.year)
-    .map(p=>({personId:p.personId,name:shortPersonName(p.name),birthYear:p.birthYear,generation:depths.get(p.personId)??-1,
+  const parent=(id:Id|undefined)=>id===undefined?'記録なし':names.person(id)??unresolvedLabel('person',id)
+  const dyn=(p:Person)=>p.legalDynasty.status==='DETERMINED'?names.dynasty(p.legalDynasty.dynastyId)??unresolvedLabel('dynasty',p.legalDynasty.dynastyId):'未確定'
+  // 出生には親参照が必須。人口からの昇格や婚姻時の補助人物登録には親参照がない。
+  return final.persons.filter(p=>!initialIds.has(p.personId)&&p.birthYear>=initial.year&&
+    (p.fatherId!==undefined||p.motherId!==undefined))
+    .map(p=>({personId:p.personId,name:names.person(p.personId)??unresolvedLabel('person',p.personId),birthYear:p.birthYear,generation:depths.get(p.personId)??-1,
       father:parent(p.fatherId),mother:parent(p.motherId),dynasty:dyn(p),alive:p.alive}))
     .sort((a,b)=>a.birthYear-b.birthYear||a.personId.localeCompare(b.personId))
 }
@@ -104,8 +121,8 @@ export function titleRows(final:WorldState|undefined):readonly TitleRow[]{
   const names=namesOf(final)
   return final.titles.filter(t=>t.kind==='TERRITORIAL').map(t=>({
     titleId:t.titleId,
-    region:final.regions.find(r=>r.regionId===t.regionId)?.name??t.regionId,
-    holder:t.holder.status==='HELD'?(names.person(t.holder.personId)??t.holder.personId):'保持者未確定',
+    region:final.regions.find(r=>r.regionId===t.regionId)?.name??unresolvedLabel('region',t.regionId),
+    holder:t.holder.status==='HELD'?(names.person(t.holder.personId)??unresolvedLabel('person',t.holder.personId)):'保持者未確定',
     holderUndetermined:t.holder.status!=='HELD',
     pendingCases:final.legal.cases.filter(c=>c.titleId===t.titleId&&c.kind==='SUCCESSION'&&c.status==='PENDING').length,
     mandatesInPeriod:final.legal.controlMandates.filter(m=>m.regionId===t.regionId&&m.effectiveFromYear<=final.year&&final.year<m.endExclusiveYear).length,
