@@ -35,7 +35,7 @@ describe('プレイヤー用テキストI/Oと明示的デバッグの境界（�
     const s=new TextGameSession(1,'FIXED_APPROVAL')
     const r=s.observe(1260,'A0')
     expect(r).toMatchObject({ok:true,channel:'PLAYER',action:'observe'})
-    if(!r.ok)return
+    if(!r.ok)throw new Error('A0観測失敗')
     const d=r.data as {year:number;branch:string;events:Array<{eventId:string}>;world:{year:number}}
     expect(d.branch).toBe('A0')
     expect(d.world.year).toBe(1260)
@@ -71,10 +71,18 @@ describe('プレイヤー用テキストI/Oと明示的デバッグの境界（�
     expect(d.a0.year).toBe(1300); expect(d.a1.year).toBe(1300)
     const a0Ids=new Set(ids(a0.result.eventLog.filter(e=>e.year===1300)))
     const a1Ids=new Set(ids(a1.result.eventLog.filter(e=>e.year===1300)))
+    // 固定seedの実履歴で差分が非空の年であること（空振りで通過させない）
+    const diff=compareYear(cmp.comparison,1300)
+    expect(diff.events.length).toBeGreaterThan(0)
+    expect(d.events.length).toBeGreaterThan(0)
+    expect(d.events).toMatchObject(diff.events.map(({kind,event})=>({kind,eventId:event.eventId,
+      eventType:event.eventType,involvedRefs:event.involvedRefs})))
+    expect(d.events.length).toBe(diff.events.length)
     for(const e of d.events){
       if(e.kind==='A1_ONLY'){expect(a1Ids.has(e.eventId)).toBe(true);expect(a0Ids.has(e.eventId)).toBe(false)}
-      if(e.kind==='A0_ONLY'){expect(a0Ids.has(e.eventId)).toBe(true);expect(a1Ids.has(e.eventId)).toBe(false)}
-      if(e.kind==='CHANGED'){expect(a0Ids.has(e.eventId)&&a1Ids.has(e.eventId)).toBe(true)}
+      else if(e.kind==='A0_ONLY'){expect(a0Ids.has(e.eventId)).toBe(true);expect(a1Ids.has(e.eventId)).toBe(false)}
+      else if(e.kind==='CHANGED'){expect(a0Ids.has(e.eventId)&&a1Ids.has(e.eventId)).toBe(true)}
+      else throw new Error(`未知のkind: ${e.kind}`)
     }
     expect(JSON.stringify(r.data)).not.toContain('technicalGoal')
   })
@@ -86,10 +94,15 @@ describe('プレイヤー用テキストI/Oと明示的デバッグの境界（�
     if(!ev)throw new Error('1262年のEventがありません')
     const r=s.inspect('event',ev.eventId,1262,'A1')
     expect(r).toMatchObject({ok:true,channel:'PLAYER'})
-    if(r.ok)expect((r.data as {sourceTraceIds:string[]}).sourceTraceIds).toEqual(ev.sourceTraceIds)
+    if(!r.ok)throw new Error('A1のEvent inspectに失敗')
+    expect((r.data as {sourceTraceIds:string[]}).sourceTraceIds).toEqual(ev.sourceTraceIds)
     // 存在しないA0側ではA1のEventが見つからない場合がある（枝を混ぜない）
-    const only=a1.result.eventLog.find(e=>e.year===1262&&!a0.result.eventLog.some(x=>x.eventId===e.eventId))
-    if(only)expect(s.inspect('event',only.eventId,1262,'A0')).toMatchObject({ok:false,code:'ENTITY_NOT_FOUND'})
+    // 同年のA0 eventLogに同じIDがない実A1 Eventを既存履歴から決定的に選ぶ
+    const only=a1.result.eventLog.find(e=>e.year>=1260&&
+      !a0.result.eventLog.some(x=>x.year===e.year&&x.eventId===e.eventId))
+    if(!only)throw new Error('A1のみのEventが実履歴にありません')
+    expect(s.inspect('event',only.eventId,only.year,'A1')).toMatchObject({ok:true,channel:'PLAYER'})
+    expect(s.inspect('event',only.eventId,only.year,'A0')).toMatchObject({ok:false,code:'ENTITY_NOT_FOUND'})
     expect(s.inspect('person','no-such',1262,'A1')).toMatchObject({ok:false,code:'ENTITY_NOT_FOUND'})
     expect(s.inspect('person','person-exp-04',1351,'A1')).toMatchObject({ok:false,code:'YEAR_UNAVAILABLE'})
     const p=s.inspect('person','person-exp-04',1262,'A1')
@@ -104,7 +117,7 @@ describe('プレイヤー用テキストI/Oと明示的デバッグの境界（�
     if(!rule)throw new Error('1260年のTraceがありません')
     const r=s.debug(1260,'A1',rule)
     expect(r).toMatchObject({ok:true,channel:'DEBUG',action:'debug'})
-    if(!r.ok)return
+    if(!r.ok)throw new Error('A1 debug失敗')
     const d=r.data as {traces:Array<{year:number;ruleId:string;traceId:string}>;events:Array<{eventId:string;sourceTraceIds:string[]}>}
     expect(d.traces.length).toBe(a1.result.decisionTraces.filter(t=>t.year===1260&&t.ruleId===rule).length)
     expect(d.traces.every(t=>t.year===1260&&t.ruleId===rule)).toBe(true)
