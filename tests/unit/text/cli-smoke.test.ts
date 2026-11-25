@@ -16,17 +16,22 @@ o.write=(...a)=>{calls++;if(o.writableNeedDrain)needDrainWrites++
   const ok=w(...a);if(!ok&&falses++===0)writeSync(2,'CF_FIRST_FALSE\\n');return ok}
 process.on('exit',()=>writeSync(2,'CF_STDOUT calls='+calls+' false='+falses+' needDrainWrites='+needDrainWrites+'\\n'))`)
 // 実pipeで親の読取りを最初のwrite false後しばらく遅らせ、出力backpressureを発生させる。
-function cliSlowReader(args:string[],input:string,delayMs:number){
+// spawnSyncと同様に期限を設け、超過時は子をSIGKILLしてclose後に失敗させる（Vitestの180s制限より十分短い）。
+function cliSlowReader(args:string[],input:string,delayMs:number,timeoutMs=60000){
   return new Promise<{code:number|null;stdout:string;stderr:string}>((resolve,reject)=>{
     const c=spawn(process.execPath,['--experimental-strip-types',`--import=${STDOUT_PROBE}`,'scripts/text-game.ts',...args],
       {cwd:process.cwd()})
-    let stdout='',stderr='',reading=false
+    let stdout='',stderr='',reading=false,timedOut=false,delay:NodeJS.Timeout|undefined
     const read=()=>{if(reading)return;reading=true;c.stdout.setEncoding('utf8');c.stdout.on('data',d=>{stdout+=d})}
+    const deadline=setTimeout(()=>{timedOut=true;c.kill('SIGKILL')},timeoutMs)
+    const cleanup=()=>{clearTimeout(deadline);clearTimeout(delay)}
     c.stderr.setEncoding('utf8')
-    c.stderr.on('data',d=>{stderr+=d;if(stderr.includes('CF_FIRST_FALSE'))setTimeout(read,delayMs)})
+    c.stderr.on('data',d=>{stderr+=d;if(delay===undefined&&stderr.includes('CF_FIRST_FALSE'))delay=setTimeout(read,delayMs)})
     c.on('exit',read)
-    c.on('error',reject)
-    c.on('close',code=>resolve({code,stdout,stderr}))
+    c.on('error',e=>{cleanup();c.kill('SIGKILL');reject(e)})
+    c.on('close',(code,signal)=>{cleanup()
+      if(timedOut)reject(new Error(`cliSlowReader timed out after ${timeoutMs}ms (signal=${signal})`))
+      else resolve({code,stdout,stderr})})
     c.stdin.end(input)
   })
 }
@@ -80,6 +85,14 @@ describe('NodeテキストCLIの起動・実世界操作',()=>{
     expect(out[17]).toMatchObject({ok:false,code:'UNKNOWN_COMMAND'})
     expect(out[18].help).toContain('Project Chronofork')
   },180000)
+
+  it('cliSlowReaderは期限超過時に子プロセスを終了させて失敗し、ハングしない',async()=>{
+    const script=['observe 1250 A0',...Array.from({length:16},()=>'debug 1260 A0'),'exit'].join('\n')+'\n'
+    const t0=Date.now()
+    // 読取りを期限より大きく遅らせ、子がdrain待ちで止まる状態を作る
+    await expect(cliSlowReader(J,script,120000,3000)).rejects.toThrow(/timed out after 3000ms \(signal=SIGKILL\)/)
+    expect(Date.now()-t0).toBeLessThan(30000)
+  },60000)
 
   it('不正なbranchはobserve・inspect・debugのいずれもA0へ変換せずエラーにする',()=>{
     const {p,out}=cli(J,[
