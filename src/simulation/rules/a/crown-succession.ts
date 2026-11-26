@@ -10,7 +10,9 @@ import type { EvaluationContext, RuleEvaluator } from '../../engine/evaluators.t
 import type { LegalEvidenceBook } from '../../legal/evidence.ts'
 import { reviewOrdinaryAuthority } from '../../legal/ordinary-authority.ts'
 import type { OrdinaryLaw } from '../../legal/ordinary-authority.ts'
-import { reviewLandHeir } from './legal-heirs.ts'
+import { heirReviewerFor } from './legal-heirs.ts'
+import type { HeirSearchMode } from './legal-heirs.ts'
+import { heirSearchInputs } from './reviewed-succession.ts'
 
 export const CROWN_SUCCESSION_VERSION = 'crown-succession-mvp-1:CALIBRATION_ONLY'
 const cmp = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0
@@ -22,7 +24,8 @@ const countryOf = (c: LegalCase): Id | undefined =>
 const caseId = (deathYear: number, titleId: Id) => 'case:crown:' + JSON.stringify([deathYear, titleId])
 const sameRef = (a: {kind:string;id:Id}, b: {kind:string;id:Id}) => a.kind === b.kind && a.id === b.id
 
-type Input = Readonly<{ book?: LegalEvidenceBook; laws?: readonly OrdinaryLaw[] }>
+/** heirSearch省略時は旧同胞枝までの照合。DEC-189構成だけが近い共通祖先へ遡る。 */
+type Input = Readonly<{ book?: LegalEvidenceBook; laws?: readonly OrdinaryLaw[]; heirSearch?: HeirSearchMode }>
 type Approval = Readonly<{ countryId: Id; decisionId: Id; authorityBasisId: Id; lawId: Id }>
 
 /** 国土の実効支配・統治委任とは独立の王位法的管轄を、授与・認定の原本と照合する。 */
@@ -74,6 +77,7 @@ function rulerCountry(w: WorldState, titleId: Id, predecessorId: Id,
 function succession(base: RuleEvaluator, input: Input): RuleEvaluator {
   const book = input.book === undefined ? undefined : structuredClone(input.book)
   const laws = structuredClone(input.laws ?? [])
+  const reviewHeir = heirReviewerFor(input.heirSearch)
   return (world, ctx) => {
     const original = base(world, ctx)
     const commands: DomainCommand[] = [...original.commands]
@@ -102,7 +106,7 @@ function succession(base: RuleEvaluator, input: Input): RuleEvaluator {
       const canCreate = newIncident && pending.length === 0 &&
         !world.legal.cases.some(c => c.caseId === caseId(predecessor.deathYear!,title.titleId))
       const cid = canCreate ? caseId(predecessor.deathYear!,title.titleId) : current?.caseId
-      const heir = reviewLandHeir(world, predecessorId)
+      const heir = reviewHeir(world, predecessorId)
       const proof = verifiedDeath && pending.length <= 1 && hasId(cid) && title.valid && title.hereditary &&
         heir.status === 'READY'
         ? approval(world, title.titleId, predecessorId, heir.personId, ctx.year, book, laws) : undefined
@@ -123,7 +127,7 @@ function succession(base: RuleEvaluator, input: Input): RuleEvaluator {
           inputs:{titleId:title.titleId,caseId:cid ?? null,predecessorPersonId:predecessorId,
             candidatePersonId:successor,decisionId:proof?.decisionId ?? null,
             authorityBasisId:proof?.authorityBasisId ?? null,
-            rankedCandidateIds:heir.rankedCandidateIds,provenance:'CALIBRATION_ONLY'},
+            rankedCandidateIds:heir.rankedCandidateIds,...heirSearchInputs(heir),provenance:'CALIBRATION_ONLY'},
           reasonCodes:['CALIBRATION_ONLY',approved?'CROWN_LEGAL_APPROVAL':noApproval],
         }],
         ...(approved?{selectedCandidateId:candidateId}:{}),

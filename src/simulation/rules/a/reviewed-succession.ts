@@ -2,7 +2,7 @@
 // DEC-055。GAME-02/03の権限者を既定推定しない。ここで扱う証拠はCALIBRATION_ONLY。
 // 通常の自律評価器を置換するオプトイン評価器で、全37ルールの正式IMPLEMENTED化ではない。
 import type {
-  ControllerRef, DecisionTraceDraft, DomainCommand, Id, LegalCaseSetCommand,
+  ControllerRef, DecisionTraceDraft, DomainCommand, Id, JsonValue, LegalCaseSetCommand,
   LegalTitleTransferCommand, ControlMandateSetCommand, WorldState, Year,
 } from '../../contracts/index.ts'
 import type { EvaluatorMap, RuleEvaluator } from '../../engine/evaluators.ts'
@@ -14,7 +14,8 @@ import type { OrdinaryLaw } from '../../legal/ordinary-authority.ts'
 import { mandateEffectiveNow, reviewOrdinaryAuthority, reviewOrdinaryDelegation, validateOrdinaryLaws } from '../../legal/ordinary-authority.ts'
 import { createASuc04WorldStateEvaluator } from './asuc04-worldstate.ts'
 import { createATit07EvidenceEvaluator } from './atit07-title-transfer.ts'
-import { reviewLandHeir } from './legal-heirs.ts'
+import { HEIR_SEARCH_MODES, heirReviewerFor } from './legal-heirs.ts'
+import type { AncestralHeirReview, HeirReview, HeirSearchMode } from './legal-heirs.ts'
 
 export const REVIEWED_LEGAL_VERSION = 'reviewed-normal-succession-1:CALIBRATION_ONLY'
 
@@ -63,6 +64,8 @@ export type ReviewedLegalInput = Readonly<{
   delegationDecisions?: readonly DelegationDecisionEvidence[]
   /** DEC-057: 背景法令がある場合だけ実WorldStateから通常相続の認証・新委任を生成する。 */
   ordinaryLaws?: readonly OrdinaryLaw[]
+  /** DEC-189: 相続順位の探索範囲。省略時は旧同胞枝までの照合（既存構成の再現性を保つ）。 */
+  heirSearch?: HeirSearchMode
 }>
 export type ReviewedLegalFactoryResult =
   | Readonly<{ ok: true; evaluators: EvaluatorMap }>
@@ -75,6 +78,14 @@ const predecessorOf = (codes: readonly string[]) =>
   codes.find(x => x.startsWith('PREDECESSOR_ID:'))?.slice('PREDECESSOR_ID:'.length)
 const reason = (code: string) => ['CALIBRATION_ONLY', 'DEC_055_PENDING_REVIEW', code]
 const safe = (x: unknown) => x !== null && typeof x === 'object'
+/** DEC-189構成だけが探索した段階・候補・除外理由をTraceへ公開する。旧構成のTraceは不変。 */
+export const heirSearchInputs = (heir: HeirReview | AncestralHeirReview | null) =>
+  heir && 'search' in heir ? {
+    heirSearch: structuredClone(heir.search) as unknown as JsonValue,
+    heirReviewStatus: heir.status, heirReasonCodes: [...(heir.status === 'PENDING' ? heir.reasonCodes : [])],
+    rankedCandidateIds: [...heir.rankedCandidateIds],
+    heirRelation: heir.status === 'READY' ? heir.relation : null,
+  } : {}
 
 /** 構造・固有IDだけを入口で検査。真正な権限は毎年、現WorldStateとbookの記録で判定する。 */
 export function createReviewedLegalEvaluators(input: ReviewedLegalInput): ReviewedLegalFactoryResult {
@@ -82,6 +93,9 @@ export function createReviewedLegalEvaluators(input: ReviewedLegalInput): Review
   const laws = input.ordinaryLaws ?? []
   const lawIssues = validateOrdinaryLaws(laws)
   if (lawIssues.length > 0) return { ok: false, issues: lawIssues }
+  if (input.heirSearch !== undefined && !HEIR_SEARCH_MODES.includes(input.heirSearch))
+    return { ok: false, issues: ['INVALID_HEIR_SEARCH_MODE'] }
+  const reviewHeir = heirReviewerFor(input.heirSearch)
   const decisions = input.successionDecisions ?? []
   const rights = input.delegationAuthorities ?? []
   const delegations = input.delegationDecisions ?? []
@@ -185,7 +199,7 @@ export function createReviewedLegalEvaluators(input: ReviewedLegalInput): Review
         continue
       }
       const predecessorId = predecessorOf(legalCase.reasonCodes)
-      const heir = predecessorId ? reviewLandHeir(world, predecessorId) : null
+      const heir = predecessorId ? reviewHeir(world, predecessorId) : null
       const proof = predecessorId && heir?.status === 'READY'
         ? proofFor(world, title.titleId, predecessorId, heir.personId, ctx.year) : undefined
       const approved = heir?.status === 'READY' && proof !== undefined
@@ -202,6 +216,7 @@ export function createReviewedLegalEvaluators(input: ReviewedLegalInput): Review
           inputs: { titleId: title.titleId, legalCaseId: legalCase.caseId,
             predecessorPersonId: predecessorId ?? null, candidatePersonId,
             decisionId: proof?.decisionId ?? null, authorityBasisId: proof?.authorityBasisId ?? null,
+            ...heirSearchInputs(heir),
             provenance: 'CALIBRATION_ONLY' }, reasonCodes: reason(why) }],
         ...(approved ? { selectedCandidateId: candidateId } : {}),
         status: approved ? 'ACCEPT' : 'DEFER', reasonCodes: reason(why),
@@ -258,7 +273,7 @@ export function createReviewedLegalEvaluators(input: ReviewedLegalInput): Review
       const successorId = legalCase.candidatePersonIds[0]!
       const predecessorId = predecessorOf(legalCase.reasonCodes)
       if (!predecessorId) continue
-      const heir = reviewLandHeir(world, predecessorId)
+      const heir = reviewHeir(world, predecessorId)
       const proof = heir.status === 'READY' && heir.personId === successorId
         ? proofFor(world, title.titleId, predecessorId, successorId, ctx.year) : undefined
       if (!proof || !legalCase.reasonCodes.includes('REVIEWED_DECISION:' + proof.decisionId) ||
