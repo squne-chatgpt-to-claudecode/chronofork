@@ -390,6 +390,36 @@ describe('DEC-189: 実A評価器の土地・CROWN審査（新旧構成の比較�
     }
   })
 
+  it('土地・CROWN: 代襲する同順位枝は、空枝・同一人物への収束・異なる候補を区別する', () => {
+    const w = cousinWorld()
+    const runBoth = (persons: readonly Person[]) => {
+      const input = { ...w, persons: [...w.persons, ...persons] }
+      return [landYear(landPending(input), 'RECORDED_COMMON_ANCESTOR'), crownYear(input, 'RECORDED_COMMON_ANCESTOR')] as const
+    }
+    const a = person('twin-a', 'MALE', 1200, { fatherId: 'synthetic-uncle' })
+    const b = person('twin-b', 'MALE', 1200, { fatherId: 'synthetic-uncle' })
+    const [emptyLand, emptyCrown] = runBoth([a, b])
+    expect(holder(emptyLand.world, LAND)).toEqual({ status: 'HELD', personId: 'synthetic-cousin' })
+    expect(holder(emptyCrown.world, CROWN)).toEqual({ status: 'HELD', personId: 'synthetic-cousin' })
+    const left = person('left', 'MALE', 1210, { fatherId: 'twin-a' })
+    const right = person('right', 'FEMALE', 1211, { fatherId: 'twin-b' })
+    const converged = { ...w, persons: w.persons.map(p => p.personId === 'synthetic-cousin'
+      ? { ...p, birthYear: 1240, fatherId: 'left', motherId: 'right' } : p).concat([a, b, left, right]) }
+    expect(holder(landYear(landPending(converged), 'RECORDED_COMMON_ANCESTOR').world, LAND))
+      .toEqual({ status: 'HELD', personId: 'synthetic-cousin' })
+    expect(holder(crownYear(converged, 'RECORDED_COMMON_ANCESTOR').world, CROWN))
+      .toEqual({ status: 'HELD', personId: 'synthetic-cousin' })
+    const [tieLand, tieCrown] = runBoth([{ ...a, alive: true, deathYear: undefined }, { ...b, alive: true, deathYear: undefined }])
+    for (const run of [tieLand, tieCrown]) {
+      expect(run.traces.find(t => t.status === 'DEFER' && t.reasonCodes.includes('SAME_PRIORITY_BIRTH_YEAR'))).toMatchObject({
+        candidates: [{ inputs: { heirSearch: { samePriority: [expect.objectContaining({ candidateIds: ['twin-a', 'twin-b'] })] } } }],
+      })
+    }
+    expect(tieCrown.world.legal.cases.find(record => record.titleId === CROWN)).toMatchObject({
+      status: 'PENDING', candidatePersonIds: ['twin-a', 'twin-b'],
+    })
+  })
+
   it('土地: 上位の従兄弟の法的王朝所属が未確定なら新構成でもDEFERし、移転しない', () => {
     const w = landPending(cousinWorld({ legalDynasty: undetermined }))
     const r = landYear(w, 'RECORDED_COMMON_ANCESTOR')

@@ -73,7 +73,7 @@ export function reviewLandHeir(world: WorldState, predecessorId: Id): HeirReview
 
 // DEC-189 / MVP§8.5: 直系・同胞枝で確立しない場合だけ、記録済みの近い共通祖先へ段階的に遡る。
 // 旧reviewLandHeirは既存構成の再現性のため変更しない。選択は評価器構成の明示オプトイン。
-export const ANCESTRAL_HEIR_SEARCH_VERSION = 'dec189-recorded-common-ancestor-5:CALIBRATION_ONLY'
+export const ANCESTRAL_HEIR_SEARCH_VERSION = 'dec189-recorded-common-ancestor-6:CALIBRATION_ONLY'
 export type HeirSearchMode = 'SIBLING_BRANCH' | 'RECORDED_COMMON_ANCESTOR'
 export const HEIR_SEARCH_MODES: readonly HeirSearchMode[] = ['SIBLING_BRANCH', 'RECORDED_COMMON_ANCESTOR']
 
@@ -96,7 +96,10 @@ export type HeirSearchDetail = Readonly<{
   /** 候補にしない人物。祖先自身と複数経路の再出現を区別する（前保持者本人は記録しない）。 */
   excluded: readonly Readonly<{ personId: Id; depth: number; reason: 'ANCESTOR_OF_PREDECESSOR' | 'DUPLICATE_PATH' }>[]
   /** 同順位で保留した枝。親（死亡枝本人または段階の共通祖先）、順位順の枝頭、競合した人物を残す。 */
-  samePriority: readonly Readonly<{ depth: number; parentIds: readonly Id[]; branchHeadIds: readonly Id[]; tiedPersonIds: readonly Id[] }>[]
+  samePriority: readonly Readonly<{
+    depth: number; parentIds: readonly Id[]; branchHeadIds: readonly Id[]; tiedPersonIds: readonly Id[]
+    candidateIds?: readonly Id[]
+  }>[]
   /** 異なる祖先の枝を別々に調べた根拠。枝内READYは全体の後継確定ではない。 */
   independentStages: readonly Readonly<{
     depth: number
@@ -217,8 +220,27 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
     }
     return false
   }
-  const orderedBranches = (open: readonly Person[], depth: number, parentIds: readonly Id[]): Person | undefined => {
-    // 明示スタックで代襲を辿る。死亡枝の長さで JavaScript の呼び出し上限を超えない。
+  const checkpoint = () => ({ ranked: ranked.length, reviewed: reviewed.length, excluded: excluded.length, samePriority: samePriority.length })
+  const isolate = (from: ReturnType<typeof checkpoint>, head: Person, parentIds: readonly Id[], heir: Person | undefined): IndependentBranchReview => {
+    const evidence = {
+      branchHeadId: head.personId, parentIds: linksTo(head, parentIds), candidateId: heir?.personId ?? null,
+      reasonCode: unresolved, rankedCandidateIds: ranked.slice(from.ranked), reviewed: reviewed.slice(from.reviewed),
+      excluded: excluded.slice(from.excluded), samePriority: samePriority.slice(from.samePriority),
+    }
+    for (const id of evidence.rankedCandidateIds) visited.delete(id)
+    ranked.length = from.ranked; reviewed.length = from.reviewed; excluded.length = from.excluded
+    samePriority.length = from.samePriority; unresolved = null
+    return evidence
+  }
+  const retain = (evidence: IndependentBranchReview) => {
+    for (const id of evidence.rankedCandidateIds) if (!visited.has(id)) { visited.add(id); ranked.push(id) }
+    for (const entry of evidence.reviewed) reviewed.push(entry)
+    for (const entry of evidence.excluded) excluded.push(entry)
+    for (const entry of evidence.samePriority) samePriority.push(entry)
+  }
+  type BranchRequest = { open: readonly Person[]; parentIds: readonly Id[] }
+  function* traverse({ open, parentIds }: BranchRequest, depth: number): Generator<BranchRequest, Person | undefined, Person | undefined> {
+    // 明示スタックで代襲を辿る。同順位枝の独立審査も反復ドライバに渡す。
     const stack = [{ open, parentIds, next: 0 }]
     while (stack.length > 0) {
       const frame = stack.at(-1)!
@@ -229,11 +251,39 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
       if (visited.has(personId)) { excluded.push({ personId, depth, reason: 'DUPLICATE_PATH' }); continue }
       if (depth > 1 && tiedWithPrevious(frame.open, frame.next)) {
         const group = [p]
-        for (let i = frame.next; tiedWithPrevious(frame.open, i); i++) {
-          const next = frame.open[i]!
+        while (tiedWithPrevious(frame.open, frame.next)) {
+          const next = frame.open[frame.next++]!
           if (!visited.has(next.personId)) group.push(next)
         }
-        if (rejectTies(group, depth, frame.parentIds)) return undefined
+        const attempts = []
+        for (const head of group) {
+          const from = checkpoint()
+          const heir = yield { open: [head], parentIds: frame.parentIds }
+          attempts.push({ heir, evidence: isolate(from, head, frame.parentIds, heir) })
+        }
+        const contenders = attempts.filter(a => a.heir || a.evidence.reasonCode)
+        const first = contenders[0]
+        if (!first) {
+          for (const a of attempts) retain(a.evidence)
+          continue
+        }
+        if (contenders.length === 1) {
+          retain(first.evidence)
+          unresolved = first.evidence.reasonCode
+          return first.heir
+        }
+        const heir = first.heir
+        if (heir && contenders.every(a => a.heir?.personId === heir.personId)) {
+          const parents = contenders.flatMap(a => a.evidence.reviewed.filter(r => r.personId === heir.personId).flatMap(r => r.parentIds))
+          visited.add(heir.personId); ranked.push(heir.personId)
+          reviewed.push({ personId: heir.personId, depth, parentIds: [...new Set(parents)].sort(cmp), outcome: 'SELECTED' })
+          return heir
+        }
+        const ids = contenders.map(a => a.evidence.branchHeadId)
+        const candidateIds = [...new Set(contenders.flatMap(a => a.heir ? [a.heir.personId] : a.evidence.samePriority.flatMap(tie => tie.candidateIds ?? [])))].sort(cmp)
+        samePriority.push({ depth, parentIds: frame.parentIds, branchHeadIds: ids, tiedPersonIds: ids, candidateIds })
+        unresolved = 'SAME_PRIORITY_BIRTH_YEAR'
+        return undefined
       }
       visited.add(personId)
       ranked.push(personId)
@@ -260,6 +310,17 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
     return undefined
   }
 
+  const orderedBranches = (open: readonly Person[], depth: number, parentIds: readonly Id[]): Person | undefined => {
+    const tasks = [traverse({ open, parentIds }, depth)]
+    let heir: Person | undefined
+    while (tasks.length > 0) {
+      const result = tasks.at(-1)!.next(heir)
+      if (result.done) { heir = result.value; tasks.pop() }
+      else { tasks.push(traverse(result.value, depth)); heir = undefined }
+    }
+    return heir
+  }
+
   const branches = (candidates: readonly Person[], depth: number, parentIds: readonly Id[]): Person | undefined => {
     const open = availableHeads(candidates, depth)
     return rejectTies(open, depth, parentIds) ? undefined : orderedBranches(open, depth, parentIds)
@@ -278,17 +339,9 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
     }
     // 別の枝の訪問履歴で候補を消さない。枝ごとに今回追加した訪問だけを巻き戻す。
     const attempts = open.map(head => {
-      const from = { ranked: ranked.length, reviewed: reviewed.length, excluded: excluded.length, samePriority: samePriority.length }
+      const from = checkpoint()
       const heir = orderedBranches([head], depth, parentIds)
-      const evidence: IndependentBranchReview = {
-        branchHeadId: head.personId, parentIds: parentsOf(head), candidateId: heir?.personId ?? null,
-        reasonCode: unresolved, rankedCandidateIds: ranked.slice(from.ranked), reviewed: reviewed.slice(from.reviewed),
-        excluded: excluded.slice(from.excluded), samePriority: samePriority.slice(from.samePriority),
-      }
-      for (const id of evidence.rankedCandidateIds) visited.delete(id)
-      ranked.length = from.ranked; reviewed.length = from.reviewed; excluded.length = from.excluded
-      samePriority.length = from.samePriority; unresolved = null
-      return { head, heir, evidence }
+      return { head, heir, evidence: isolate(from, head, parentIds, heir) }
     })
     // 候補も未確定事項も残らなかった枝を除き、記録された共通親ごとに上位枝を求める。
     const viable = attempts.filter(a => a.heir || a.evidence.reasonCode)
@@ -307,10 +360,7 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
     const first = possibleTop[0]!
     if (possibleTop.length === 1) {
       const evidence = first.evidence
-      for (const id of evidence.rankedCandidateIds) ranked.push(id)
-      for (const entry of evidence.reviewed) reviewed.push(entry)
-      for (const entry of evidence.excluded) excluded.push(entry)
-      for (const entry of evidence.samePriority) samePriority.push(entry)
+      retain(evidence)
       unresolved = evidence.reasonCode
       return first.heir
     }
