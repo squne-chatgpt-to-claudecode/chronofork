@@ -63,7 +63,7 @@ describe('DEC-189: 記録済みの近い共通祖先へ遡る傍系探索（純�
     expect(review([...family, maternalHalf])).toMatchObject({ status: 'READY', personId: 'half', search: { decisiveDepth: 1 } })
   })
 
-  it('同胞枝が尽きた後、祖父母段階の叔父叔母・従兄弟を父母双方から順位付けて探す', () => {
+  it('同胞枝が尽きた後、父母双方を調べるが独立した祖父母の枝同士は年齢・性別だけで決めない', () => {
     const uncle = person('uncle', 'MALE', 1212, { fatherId: 'gf' })
     const cousinF = person('cousin-f', 'FEMALE', 1238, { fatherId: 'uncle', alive: true })
     const maternalUncle = person('m-uncle', 'MALE', 1217, { fatherId: 'mgf' })
@@ -71,8 +71,7 @@ describe('DEC-189: 記録済みの近い共通祖先へ遡る傍系探索（純�
     const persons = [...family, uncle, cousinF, maternalUncle, cousinM]
     expect(reviewLandHeir(world(persons), 'pre')).toMatchObject({ status: 'PENDING', reasonCodes: ['NO_ESTABLISHED_HEIR'] })
     const r = review(persons)
-    // 祖父母段階の子は男子優先・年長: uncle(1212) → m-uncle(1217)。uncleの枝の代襲で娘が先に確立する。
-    expect(r).toMatchObject({ status: 'READY', personId: 'cousin-f', relation: 'COLLATERAL' })
+    expect(r).toMatchObject({ status: 'PENDING', reasonCodes: ['COLLATERAL_BRANCH_PRIORITY_UNDETERMINED'] })
     expect(r.search.decisiveDepth).toBe(2)
     expect(r.search.steps.find(s => s.depth === 2)?.commonAncestorIds).toEqual(['gf', 'mgf'])
     expect(r.search.excluded).toEqual(expect.arrayContaining([
@@ -80,7 +79,38 @@ describe('DEC-189: 記録済みの近い共通祖先へ遡る傍系探索（純�
       { personId: 'm', depth: 2, reason: 'ANCESTOR_OF_PREDECESSOR' },
     ]))
     expect(r.search.version).toBe(ANCESTRAL_HEIR_SEARCH_VERSION)
-    expect(r.rankedCandidateIds).toEqual(['uncle', 'cousin-f'])
+    expect(r.rankedCandidateIds).toEqual([])
+    expect(r.search.independentStages).toMatchObject([{
+      depth: 2, possibleTopBranchIds: ['uncle', 'm-uncle'],
+      branches: [
+        { branchHeadId: 'uncle', parentIds: ['gf'], candidateId: 'cousin-f' },
+        { branchHeadId: 'm-uncle', parentIds: ['mgf'], candidateId: 'cousin-m' },
+      ],
+    }])
+    expect(review([...persons].reverse())).toEqual(r)
+    // 共通親が記録されている比較可能な枝では、年長枝の代襲を維持する。
+    const comparable = review([...family, uncle, cousinF, { ...maternalUncle, fatherId: 'gf' }, cousinM])
+    expect(comparable).toMatchObject({ status: 'READY', personId: 'cousin-f', relation: 'COLLATERAL' })
+    expect(comparable.rankedCandidateIds).toEqual(['uncle', 'cousin-f'])
+  })
+
+  it('独立枝の一方に候補がいなければ進み、資格未確定が残るなら飛ばさない', () => {
+    const uncle = person('uncle', 'MALE', 1212, { fatherId: 'gf' })
+    const other = person('other', 'FEMALE', 1218, { fatherId: 'mgf', alive: true })
+    const ready = review([...family, uncle, other])
+    expect(ready).toMatchObject({ status: 'READY', personId: 'other', search: { decisiveDepth: 2 } })
+    expect(ready.search.independentStages[0]?.branches).toMatchObject([
+      { branchHeadId: 'uncle', candidateId: null, reasonCode: null },
+      { branchHeadId: 'other', candidateId: 'other' },
+    ])
+    const unknown = review([...family, person('uncle', 'MALE', 1212, { fatherId: 'gf', alive: true, legalDynasty: undetermined }), other])
+    expect(unknown).toMatchObject({ status: 'PENDING', reasonCodes: ['COLLATERAL_BRANCH_PRIORITY_UNDETERMINED'] })
+    expect(unknown.search.independentStages[0]?.branches[0]).toMatchObject({
+      branchHeadId: 'uncle', reasonCode: 'LEGAL_DYNASTY_UNDETERMINED',
+    })
+    const noCandidates = review([...family, uncle, person('other', 'FEMALE', 1218, { fatherId: 'mgf' }),
+      person('distant', 'MALE', 1220, { fatherId: 'gu', alive: true })])
+    expect(noCandidates).toMatchObject({ status: 'READY', personId: 'distant', search: { decisiveDepth: 3 } })
   })
 
   it('近い段階に候補がいなければ曾祖父母段階の遠い枝へ進み、存命の祖先自身は候補にしない', () => {
@@ -97,8 +127,46 @@ describe('DEC-189: 記録済みの近い共通祖先へ遡る傍系探索（純�
 
   it('同順位（同性・同生年）の枝はID順で選ばずPENDING', () => {
     const a = person('uncle-a', 'MALE', 1212, { fatherId: 'gf', alive: true })
-    const b = person('uncle-b', 'MALE', 1212, { fatherId: 'mgf', alive: true })
-    expect(review([...family, a, b])).toMatchObject({ status: 'PENDING', reasonCodes: ['SAME_PRIORITY_BIRTH_YEAR'], search: { decisiveDepth: 2 } })
+    const b = person('uncle-b', 'MALE', 1212, { fatherId: 'gf', alive: true })
+    expect(review([...family, a, { ...b, fatherId: 'mgf' }])).toMatchObject({
+      status: 'PENDING', reasonCodes: ['COLLATERAL_BRANCH_PRIORITY_UNDETERMINED'],
+    })
+    const r = review([...family, a, b])
+    expect(r).toMatchObject({ status: 'PENDING', reasonCodes: ['SAME_PRIORITY_BIRTH_YEAR'], search: { decisiveDepth: 2 } })
+    // 競合した人物・親枝・順位をTraceから追える。
+    expect(r.search.samePriority).toEqual([{
+      depth: 2, parentIds: ['gf'], branchHeadIds: ['uncle-a', 'uncle-b'], tiedPersonIds: ['uncle-a', 'uncle-b'],
+    }])
+    // 死亡枝の子同士の同順位は、その死亡者を親枝として記録する。
+    const deadSib = person('dead-sib', 'MALE', 1242, { fatherId: 'f' })
+    const elder = person('elder', 'MALE', 1250, { fatherId: 'dead-sib', alive: true })
+    const twinA = person('twin-a', 'MALE', 1265, { fatherId: 'dead-sib', alive: true })
+    const twinB = person('twin-b', 'MALE', 1265, { fatherId: 'dead-sib', alive: true })
+    const nested = review([...family, deadSib, elder, twinA, twinB])
+    expect(nested).toMatchObject({ status: 'PENDING', reasonCodes: ['SAME_PRIORITY_BIRTH_YEAR'], rankedCandidateIds: ['dead-sib'] })
+    expect(nested.search.samePriority).toEqual([{
+      depth: 1, parentIds: ['dead-sib'], branchHeadIds: ['elder', 'twin-a', 'twin-b'], tiedPersonIds: ['twin-a', 'twin-b'],
+    }])
+    expect(review([...family, person('sib', 'MALE', 1242, { fatherId: 'f', alive: true })]).search.samePriority).toEqual([])
+  })
+
+  it('祖父母以上では下位・候補不在の同順位で上位候補を保留しない', () => {
+    const elder = person('elder', 'MALE', 1212, { fatherId: 'gf', alive: true })
+    const twinA = person('twin-a', 'MALE', 1215, { fatherId: 'gf', alive: true })
+    const twinB = person('twin-b', 'MALE', 1215, { fatherId: 'gf', alive: true })
+    const empty = person('empty', 'MALE', 1215, { fatherId: 'mgf' })
+    for (const persons of [[...family, elder, twinA, twinB], [...family, elder, twinA, twinB, empty]]) {
+      expect(review(persons)).toMatchObject({ status: 'READY', personId: 'elder', search: { samePriority: [] } })
+    }
+    const uncle = person('uncle', 'MALE', 1212, { fatherId: 'gf' })
+    const cousin = person('cousin', 'MALE', 1240, { fatherId: 'uncle', alive: true })
+    const younger = [twinA, twinB].map(p => ({ ...p, birthYear: 1242, fatherId: 'uncle' }))
+    expect(review([...family, uncle, cousin, ...younger])).toMatchObject({ status: 'READY', personId: 'cousin' })
+    expect(review([...family, uncle, ...younger])).toMatchObject({ status: 'PENDING', reasonCodes: ['SAME_PRIORITY_BIRTH_YEAR'] })
+    const emptyA = person('empty-a', 'MALE', 1215, { fatherId: 'gf' })
+    const emptyB = person('empty-b', 'MALE', 1215, { fatherId: 'gf' })
+    const distant = person('distant', 'MALE', 1220, { fatherId: 'gu', alive: true })
+    expect(review([...family, emptyA, emptyB, distant])).toMatchObject({ status: 'READY', personId: 'distant', search: { decisiveDepth: 3 } })
   })
 
   it('上位候補の法的王朝所属が未確定なら下位候補へ飛ばさず保留し、王朝所属だけで順位を変えない', () => {
@@ -120,12 +188,53 @@ describe('DEC-189: 記録済みの近い共通祖先へ遡る傍系探索（純�
     const r = review([...family, uncle, aunt, cousin])
     expect(r).toMatchObject({ status: 'READY', personId: 'cousin' })
     expect(r.rankedCandidateIds.filter(id => id === 'cousin')).toHaveLength(1)
+    expect(r.search.independentStages[0]?.branches.map(b => b.candidateId)).toEqual(['cousin', 'cousin'])
     // 代襲の経路上の人物が自分の子孫に再出現する記録は循環として保留する。
     const loopA = person('loop-a', 'MALE', 1212, { fatherId: 'gf', motherId: 'loop-b' })
     const loopB = person('loop-b', 'FEMALE', 1213, { fatherId: 'loop-a' })
     expect(review([...family, loopA, loopB])).toMatchObject({ status: 'PENDING', reasonCodes: ['KINSHIP_CYCLE'] })
     const selfAncestor = { ...GGF, fatherId: 'pre' }
     expect(review([selfAncestor, GF, GU, MGF, F, M, PRE])).toMatchObject({ status: 'PENDING', reasonCodes: ['KINSHIP_CYCLE'] })
+    // 故人と存命の父が互いを父とする記録では、父を直系後継として確定しない。
+    const mutualFather = person('f', 'MALE', 1210, { fatherId: 'pre', alive: true })
+    const mutual = review([mutualFather, M, MGF, { ...PRE, motherId: 'm' }])
+    expect(mutual).toMatchObject({ status: 'PENDING', reasonCodes: ['KINSHIP_CYCLE'], rankedCandidateIds: [] })
+    expect(mutual.search.decisiveDepth).toBeNull()
+  })
+
+  it('必要な経路の循環は保留するが、未使用の遠い祖先の循環では近い候補を落とさない', () => {
+    const uncle = person('uncle', 'MALE', 1212, { fatherId: 'gf', motherId: 'cousin', alive: true })
+    const cousin = person('cousin', 'FEMALE', 1242, { fatherId: 'uncle', alive: true })
+    expect(review([...family, uncle, cousin])).toMatchObject({
+      status: 'PENDING', reasonCodes: ['KINSHIP_CYCLE'],
+      search: { reviewed: [{ personId: 'uncle', depth: 2, parentIds: ['gf'], outcome: 'KINSHIP_CYCLE' }] },
+    })
+    const cyclicGgf = { ...GGF, fatherId: 'remote' }
+    const remote = person('remote', 'MALE', 1120, { fatherId: 'ggf' })
+    const sibling = person('sib', 'MALE', 1242, { fatherId: 'f', motherId: 'm', alive: true })
+    const persons = [cyclicGgf, remote, GF, GU, MGF, F, M, PRE]
+    expect(review(persons)).toMatchObject({ status: 'PENDING', reasonCodes: ['KINSHIP_CYCLE'] })
+    expect(review([...persons, sibling])).toMatchObject({ status: 'READY', personId: 'sib', rankedCandidateIds: ['sib'],
+      search: { reviewed: [{ personId: 'sib', depth: 1, parentIds: ['f', 'm'], outcome: 'SELECTED' }] },
+    })
+  })
+
+  it('親IDだけは同胞の照合に使うが、祖父母の欠落レコードは傍系の根拠にしない', () => {
+    const missingGrandparent = [...family.filter(p => p.personId !== 'gf'), person('uncle', 'MALE', 1212, { fatherId: 'gf', alive: true })]
+    expect(review(missingGrandparent)).toMatchObject({ status: 'PENDING', reasonCodes: ['ANCESTOR_RECORD_MISSING'],
+      search: { decisiveDepth: 2 }, rankedCandidateIds: [],
+    })
+    const sibling = person('sib', 'MALE', 1242, { fatherId: 'f', alive: true })
+    expect(review([PRE, M, MGF, sibling])).toMatchObject({ status: 'READY', personId: 'sib' })
+  })
+
+  it('深い系譜・代襲でもスタック上限に依存せず直系を選ぶ', () => {
+    const length = 12000
+    const ancestors = Array.from({ length }, (_, i) => person(`a-${i}`, 'MALE', i, { fatherId: i ? `a-${i - 1}` : undefined }))
+    const predecessor = person('pre', 'MALE', length, { fatherId: `a-${length - 1}` })
+    const descendants = Array.from({ length }, (_, i) => person(`d-${i}`, 'MALE', length + i + 1,
+      { fatherId: i ? `d-${i - 1}` : 'pre', alive: i + 1 === length }))
+    expect(review([...ancestors, predecessor, ...descendants])).toMatchObject({ status: 'READY', personId: `d-${length - 1}`, relation: 'DESCENDANT' })
   })
 
   it('記録された祖先が尽きれば候補ゼロ、祖先記録の欠落・親子不明は別理由で保留する', () => {
@@ -142,11 +251,11 @@ describe('DEC-189: 記録済みの近い共通祖先へ遡る傍系探索（純�
   it('前保持者が存命なら審査せず、当年死亡した候補は代襲へ進む', () => {
     expect(reviewAncestralHeir(world([...family.slice(0, -1), { ...PRE, alive: true }]), 'pre'))
       .toMatchObject({ status: 'PENDING', reasonCodes: ['PREDECESSOR_NOT_DECEASED'] })
-    const uncle = person('uncle', 'MALE', 1212, { fatherId: 'gf' })
+    const uncle = { ...person('uncle', 'MALE', 1212, { fatherId: 'gf' }), deathYear: 1286 }
     const cousin = person('cousin', 'MALE', 1240, { fatherId: 'uncle', alive: true })
     expect(review([...family, uncle, cousin]).search.reviewed).toEqual([
-      { personId: 'uncle', depth: 2, outcome: 'DECEASED_REPRESENTATION' },
-      { personId: 'cousin', depth: 2, outcome: 'SELECTED' },
+      { personId: 'uncle', depth: 2, parentIds: ['gf'], outcome: 'DECEASED_REPRESENTATION' },
+      { personId: 'cousin', depth: 2, parentIds: ['uncle'], outcome: 'SELECTED' },
     ])
   })
 })
@@ -164,6 +273,19 @@ const cousinWorld = (cousin: Opt = {}): WorldState => {
     ...base,
     persons: [...base.persons.map(p => p.personId === P1 ? { ...p, fatherId: 'synthetic-f' }
       : p.fatherId === P1 ? { ...p, alive: false, deathYear: 1249 } : p), grand, father, uncle, cousinP],
+  }
+}
+const competingWorld = (bridge = false): WorldState => {
+  const w = cousinWorld()
+  return {
+    ...w,
+    persons: [...w.persons.map(p => p.personId === P1 ? { ...p, motherId: 'synthetic-mother' } : p),
+      person('synthetic-mgf', 'FEMALE', 1177),
+      person('synthetic-mother', 'FEMALE', 1187, { motherId: 'synthetic-mgf' }),
+      person('synthetic-m-uncle', 'MALE', 1192, { motherId: 'synthetic-mgf' }),
+      person('synthetic-m-cousin', 'MALE', 1220, { fatherId: 'synthetic-m-uncle', alive: true }),
+      ...(bridge ? [person('synthetic-bridge', 'MALE', 1190, { fatherId: 'synthetic-gf', motherId: 'synthetic-mgf', alive: true })] : []),
+    ],
   }
 }
 const landPending = (w: WorldState): WorldState => ({
@@ -222,6 +344,50 @@ describe('DEC-189: 実A評価器の土地・CROWN審査（新旧構成の比較�
       t.reasonCodes.includes('GAME_03_NEW_DELEGATION_EVIDENCE_MISSING')))).toBe(true)
     expect(next.world.regions).toEqual(w.regions)
     expect(landYear(w, 'RECORDED_COMMON_ANCESTOR')).toEqual(next) // 同条件の再計算完全一致
+  })
+
+  it('土地・CROWN: 独立枝の候補競合では既存法令があっても保留し、実Traceに両枝を残す', () => {
+    const w = competingWorld()
+    const land = landYear(landPending(w), 'RECORDED_COMMON_ANCESTOR')
+    expect(holder(land.world, LAND).status).toBe('UNDETERMINED')
+    const l = land.traces.find(t => t.ruleId === 'A-SUC-04' && t.reasonCodes.includes('COLLATERAL_BRANCH_PRIORITY_UNDETERMINED'))!
+    expect(l.status).toBe('DEFER')
+    expect(l.candidates[0]!.inputs).toMatchObject({ candidatePersonId: null, heirReviewStatus: 'PENDING',
+      heirSearch: { independentStages: [expect.objectContaining({ branches: expect.arrayContaining([
+        expect.objectContaining({ candidateId: 'synthetic-cousin', parentIds: ['synthetic-gf'] }),
+        expect.objectContaining({ candidateId: 'synthetic-m-cousin', parentIds: ['synthetic-mgf'] }),
+      ]) })] },
+    })
+    const crown = crownYear(w, 'RECORDED_COMMON_ANCESTOR')
+    expect(holder(crown.world, CROWN).status).toBe('UNDETERMINED')
+    const c = crown.traces.find(t => t.reasonCodes.includes('CROWN_SUCCESSION_REVIEW'))!
+    expect(c.status).toBe('DEFER')
+    expect(c.reasonCodes).toContain('COLLATERAL_BRANCH_PRIORITY_UNDETERMINED')
+    expect(c.candidates[0]!.inputs).toMatchObject({ candidatePersonId: null, heirReviewStatus: 'PENDING' })
+    expect(c.candidates[0]!.inputs.heirSearch).toEqual(l.candidates[0]!.inputs.heirSearch)
+    expect(crown.world.legal.cases.find(record => record.titleId === CROWN)).toMatchObject({ status: 'PENDING',
+      candidatePersonIds: ['synthetic-cousin', 'synthetic-m-cousin'],
+    })
+  })
+
+  it('土地・CROWN: 共通の親が片側にあっても、もう片側の上位枝を消さない', () => {
+    const bothSides = competingWorld(true)
+    for (const w of [bothSides, { ...bothSides, persons: bothSides.persons.filter(p => p.personId !== 'synthetic-m-uncle' && p.personId !== 'synthetic-m-cousin') }]) {
+      const evaluated = [
+        [landYear(landPending(w), 'RECORDED_COMMON_ANCESTOR'), LAND],
+        [crownYear(w, 'RECORDED_COMMON_ANCESTOR'), CROWN],
+      ] as const
+      for (const [run, titleId] of evaluated) {
+        expect(holder(run.world, titleId).status).toBe('UNDETERMINED')
+        const trace = run.traces.find(t => t.reasonCodes.includes('COLLATERAL_BRANCH_PRIORITY_UNDETERMINED'))
+        expect(trace).toMatchObject({ status: 'DEFER', candidates: [{ inputs: { heirSearch: {
+          independentStages: [expect.objectContaining({ possibleTopBranchIds: ['synthetic-uncle', 'synthetic-bridge'] })],
+        } } }] })
+      }
+      expect(evaluated[1][0].world.legal.cases.find(record => record.titleId === CROWN)).toMatchObject({
+        status: 'PENDING', candidatePersonIds: ['synthetic-cousin', 'synthetic-bridge'],
+      })
+    }
   })
 
   it('土地: 上位の従兄弟の法的王朝所属が未確定なら新構成でもDEFERし、移転しない', () => {

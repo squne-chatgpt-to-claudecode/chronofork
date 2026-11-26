@@ -171,8 +171,12 @@ function succession(base: RuleEvaluator, input: Input): RuleEvaluator {
           reasonCodes:['CALIBRATION_ONLY','CROWN_CASE_RECORDING_ONLY','NOT_SUCCESSION_APPROVAL'],
           modifierIds:[],ruleVersion:CROWN_SUCCESSION_VERSION,
         })
-        const rawCandidates = heir.rankedCandidateIds.filter(id =>
-          world.persons.some(p => p.personId === id && p.alive))
+        const rankedIds = heir.rankedCandidateIds.filter(id => world.persons.some(p => p.personId === id && p.alive))
+        // 全体順位が不明でも、各上位枝で確認した存命候補を案件から消さない。
+        const possibleIds = 'search' in heir ? heir.search.independentStages.flatMap(stage => stage.branches
+          .filter(branch => stage.possibleTopBranchIds.includes(branch.branchHeadId))
+          .flatMap(branch => branch.candidateId === null ? [] : [branch.candidateId])) : []
+        const rawCandidates = [...new Set([...rankedIds, ...possibleIds])]
         const cmd: LegalCaseSetCommand = {
           type:'LEGAL_CASE_SET',commandId:'cmd:crown:pending:'+JSON.stringify([ctx.year,cid]),
           source:{requestId:'req:crown:pending:'+cid,
