@@ -13,6 +13,7 @@ import type {
   LegalCase,
   LegalDynastyState,
   Marriage,
+  MarriageClause,
   MarriageContract,
   Person,
   PersonPairTrust,
@@ -337,7 +338,15 @@ function marriageContract(d: Sink, v: unknown, p: string): MarriageContract {
   return {
     contractId: str(d, o, 'contractId', p),
     evidenceId: str(d, o, 'evidenceId', p),
-    clauses: arr(d, o, 'clauses', p, (cv, cp) => {
+    clauses: arr(d, o, 'clauses', p, (cv, cp): MarriageClause => {
+      // DEC-190の家門条項は王朝条項と別のフィールド集合。旧JSONの王朝条項は従来どおり読む。
+      if (isPlainObject(cv) && cv['kind'] === 'CHILD_HOUSE_AFFILIATION') {
+        const co = obj(d, cv, cp, ['clauseId', 'kind', 'houseId', 'sourcePersonId'])
+        return {
+          clauseId: str(d, co, 'clauseId', cp), kind: 'CHILD_HOUSE_AFFILIATION',
+          houseId: str(d, co, 'houseId', cp), sourcePersonId: str(d, co, 'sourcePersonId', cp),
+        }
+      }
       const co = obj(d, cv, cp, ['clauseId', 'kind', 'dynastyId'])
       return {
         clauseId: str(d, co, 'clauseId', cp),

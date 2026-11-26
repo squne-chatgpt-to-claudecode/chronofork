@@ -107,11 +107,24 @@ export type Dynasty = Readonly<{ dynastyId: Id; name: string }>
  * 婚姻契約の明示条項。子の法的王朝帰属を契約が明示する場合のみ表現する（GAME-01）。
  * 父系・母系などの既定規則は持たない。条項が無ければ子の帰属は A が証拠なしに決めず UNDETERMINED。
  */
-export type MarriageClause = Readonly<{
+export type ChildLegalDynastyClause = Readonly<{
   clauseId: Id
   kind: 'CHILD_LEGAL_DYNASTY'
   dynastyId: Id
 }>
+
+/**
+ * DEC-190: 出生児の家門所属を父方原則の例外として母方家門へ置く明示条項。法的王朝・出身人口集団とは独立。
+ * MVPでは婚姻当事者である母（sourcePersonId）の実在する家門だけを指定できる。無条項は父方。
+ */
+export type ChildHouseAffiliationClause = Readonly<{
+  clauseId: Id
+  kind: 'CHILD_HOUSE_AFFILIATION'
+  houseId: Id
+  sourcePersonId: Id
+}>
+
+export type MarriageClause = ChildLegalDynastyClause | ChildHouseAffiliationClause
 
 /** 契約の証拠。evidenceId は A が適法性を確認した根拠（契約書・決定）の ID。 */
 export type MarriageContract = Readonly<{

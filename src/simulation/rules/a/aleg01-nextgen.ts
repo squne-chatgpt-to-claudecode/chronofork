@@ -115,8 +115,12 @@ export function createALeg01NextgenEvaluator(input:NextgenMarriageInput):Nextgen
           const recorded=option as Readonly<Record<string,unknown>>
           return recorded.key===choice.key&&recorded.dynastyId===choice.dynastyId&&
             recorded.firstConsentScore===choice.firstConsentScore&&recorded.secondConsentScore===choice.secondConsentScore&&
-            recorded.mutuallyAccepted===choice.mutuallyAccepted&&recorded.minimumUtility===choice.minimumUtility
+            recorded.mutuallyAccepted===choice.mutuallyAccepted&&recorded.minimumUtility===choice.minimumUtility&&
+            JSON.stringify(recorded.childHouse??null)===JSON.stringify(choice.childHouse??null)
         }))continue
+      // DEC-190: 選択した家門条項もB-005記録とAの再評価で一致しなければ登録しない。
+      if(cal.childHouse!==undefined&&JSON.stringify(negotiation.inputs.selectedChildHouse??null)!==
+        JSON.stringify(agreement.choice.childHouse??null))continue
       const law=reviewOrdinaryAuthority(world,book,laws,{
         action:'NORMAL_MARRIAGE',sovereignCountryId:eligibility.countryId,
         issuerRef:{kind:'COUNTRY',id:eligibility.countryId},year:ctx.year,

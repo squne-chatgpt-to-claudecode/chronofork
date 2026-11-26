@@ -320,15 +320,29 @@ export function checkWorldIntegrity(world: WorldState, yearStart = false): Diagn
     if (m.contract !== undefined) {
       const clauseIds = new Set<Id>()
       const attributed = new Set<Id>()
+      const houseClauses: Id[] = []
       m.contract.clauses.forEach((cl, j) => {
         const cp = `${p}.contract.clauses[${j}]`
         if (clauseIds.has(cl.clauseId)) add('DUPLICATE_ID', cp, `条項 ID が重複しています: ${cl.clauseId}`, o)
         clauseIds.add(cl.clauseId)
-        ref('DYNASTY', cl.dynastyId, `${cp}.dynastyId`, o)
-        attributed.add(cl.dynastyId)
+        if (cl.kind === 'CHILD_LEGAL_DYNASTY') {
+          ref('DYNASTY', cl.dynastyId, `${cp}.dynastyId`, o)
+          attributed.add(cl.dynastyId)
+          return
+        }
+        // DEC-190: 家門条項は王朝条項と独立に数える。出典は婚姻当事者に限る。
+        ref('HOUSE', cl.houseId, `${cp}.houseId`, o)
+        ref('PERSON', cl.sourcePersonId, `${cp}.sourcePersonId`, o)
+        if (!m.personIds.includes(cl.sourcePersonId)) {
+          add('MARRIAGE_CLAUSE_CONFLICT', `${cp}.sourcePersonId`, '家門条項の出典は婚姻当事者でなければなりません', o, [cl.sourcePersonId])
+        }
+        houseClauses.push(cl.clauseId)
       })
       if (attributed.size > 1) {
         add('MARRIAGE_CLAUSE_CONFLICT', `${p}.contract.clauses`, '子の法的王朝帰属を指定する条項が矛盾しています（優先順位は自動決定しません）', o, [...attributed])
+      }
+      if (houseClauses.length > 1) {
+        add('MARRIAGE_CLAUSE_CONFLICT', `${p}.contract.clauses`, '子の家門所属を指定する条項が複数あります（優先順位は自動決定しません）', o, houseClauses)
       }
     }
   })

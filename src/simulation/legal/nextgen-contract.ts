@@ -1,7 +1,13 @@
 // DEC-058: 家門契約案を当年の実人物・王朝・所領・家門支持から評価。
 // 校正用効用係数は暫定。父系デフォルト、勝利対象王朝への優遇、同率のID順解消は禁止。
-import type { Id, MarriageContract, Person, WorldState } from '../contracts/index.ts'
+import type { Id, MarriageClause, MarriageContract, Person, WorldState } from '../contracts/index.ts'
 import { marriageCandidatePersons } from './nextgen-marriage.ts'
+import { childHouseClauseIssue } from './child-house.ts'
+
+/** DEC-190: 契約案の子の家門。PATERNAL_DEFAULTは無条項、MATERNALは母の家門を指定する明示条項。 */
+export type ContractChildHouse =
+  | Readonly<{basis:'PATERNAL_DEFAULT';houseId:Id}>
+  | Readonly<{basis:'MATERNAL_CONTRACT_CLAUSE';houseId:Id;sourcePersonId:Id}>
 
 export type ContractChoice=Readonly<{
   key:string
@@ -10,6 +16,8 @@ export type ContractChoice=Readonly<{
   secondConsentScore:number
   mutuallyAccepted:boolean
   minimumUtility:number
+  /** DEC-190構成だけが持つ。旧構成の選択肢・記録は変更しない。 */
+  childHouse?:ContractChildHouse
 }>
 export type ContractAgreement=
   | Readonly<{status:'ACCEPT';reasonCode:'BOTH_PARTIES_ACCEPT_UNIQUE_CONTRACT';choice:ContractChoice;choices:readonly ContractChoice[]}>
@@ -22,6 +30,19 @@ export type NextgenContractCalibration=Readonly<{
   otherDynastyCost:number
   titleWeight:number
   noClauseCost:number
+  supportWeight:number
+  /** DEC-190の家門条項案。省略は旧版（王朝条項のみ）。王朝の利害係数とは別に版管理する。 */
+  childHouse?:ChildHouseContractCalibration
+}>
+/** 子の家門所属に関する当事者別の利害（CALIBRATION_ONLY）。正式係数・家系存続意思ではない。 */
+export type ChildHouseContractCalibration=Readonly<{
+  status:'CALIBRATION_ONLY'
+  version:string
+  ownHouseBonus:number
+  otherHouseCost:number
+  /** 父方原則からの例外に双方が負う費用。 */
+  exceptionCost:number
+  titleWeight:number
   supportWeight:number
 }>
 export const EXPERIMENTAL_NEXTGEN_CONTRACT:NextgenContractCalibration=Object.freeze({
@@ -41,7 +62,24 @@ export function validateNextgenContractCalibration(c:NextgenContractCalibration)
     c.consentThreshold,c.ownDynastyBonus,c.otherDynastyCost,
     c.titleWeight,c.noClauseCost,c.supportWeight,
   ]
-  return fields.every(n=>int(n)&&Math.abs(n)<=1000)?[]:['CONTRACT_CALIBRATION_OUT_OF_RANGE']
+  if(!fields.every(n=>int(n)&&Math.abs(n)<=1000))return ['CONTRACT_CALIBRATION_OUT_OF_RANGE']
+  if(c.childHouse===undefined)return []
+  const h=c.childHouse
+  if(!h||h.status!=='CALIBRATION_ONLY'||typeof h.version!=='string'||h.version.length===0)
+    return ['CHILD_HOUSE_CALIBRATION_NOT_EXPERIMENTAL']
+  return [h.ownHouseBonus,h.otherHouseCost,h.exceptionCost,h.titleWeight,h.supportWeight]
+    .every(n=>int(n)&&Math.abs(n)<=1000)?[]:['CHILD_HOUSE_CALIBRATION_OUT_OF_RANGE']
+}
+/** 当年の家門所属者が保持する有効な世襲Title数。王朝の称号強度とは別に数える。 */
+function houseTitleStrength(world:WorldState,houseId:Id):number{
+  const people=new Map(world.persons.map(p=>[p.personId,p]))
+  return world.titles.filter(t=>t.valid&&t.hereditary&&t.recognition.status==='ACTIVE'&&
+    t.holder.status==='HELD'&&people.get(t.holder.personId)?.houseId===houseId).length
+}
+function childHouseScore(world:WorldState,p:Person,houseId:Id,c:ChildHouseContractCalibration):number{
+  const support=world.groups.find(g=>g.groupId===p.originGroupId)?.support.houseBps[houseId]??0
+  return (p.houseId===houseId?c.ownHouseBonus:-c.otherHouseCost)+
+    c.titleWeight*houseTitleStrength(world,houseId)+c.supportWeight*Math.floor(support/2000)
 }
 function dynastyOf(p:Person,world:WorldState):Id|null{
   if(p.legalDynasty.status!=='DETERMINED')return null
@@ -91,7 +129,7 @@ export function chooseNextgenContract(
   const dyn=people.map(p=>dynastyOf(p,world))
   const dynasties=[...new Set(dyn.filter((v):v is Id=>v!==null))].sort(cmp)
   const options:(Id|null)[]=[null,...dynasties]
-  const choices:ContractChoice[]=options.map(id=>{
+  const legacy:ContractChoice[]=options.map(id=>{
     const utility=(p:Person,idx:number):number=>{
       if(id===null)return trustScore-calibration.noClauseCost
       const self=dyn[idx]===id
@@ -109,6 +147,29 @@ export function chooseNextgenContract(
       minimumUtility:Math.min(firstConsentScore,secondConsentScore),
     }
   })
+  const houseCal=calibration.childHouse
+  const father=people.find(p=>p.sex==='MALE'),mother=people.find(p=>p.sex==='FEMALE')
+  let choices:ContractChoice[]=legacy
+  if(houseCal!==undefined){
+    if(!father||!mother||!world.houses.some(h=>h.houseId===father.houseId))
+      return {status:'DEFER',reasonCode:'CHILD_HOUSE_PATERNAL_UNVERIFIED',choices:[]}
+    const paternal:ContractChildHouse={basis:'PATERNAL_DEFAULT',houseId:father.houseId}
+    const maternal:ContractChildHouse={basis:'MATERNAL_CONTRACT_CLAUSE',houseId:mother.houseId,sourcePersonId:mother.personId}
+    // 母方案は当事者の実在家門で、父方と異なり同じ管轄の場合だけ。第三者家門の案は作らない。
+    const maternalValid=childHouseClauseIssue(world,people,{clauseId:'candidate',kind:'CHILD_HOUSE_AFFILIATION',
+      houseId:maternal.houseId,sourcePersonId:mother.personId})===null
+    const delta=people.map(p=>childHouseScore(world,p,maternal.houseId,houseCal)-
+      childHouseScore(world,p,paternal.houseId,houseCal)-houseCal.exceptionCost)
+    choices=[
+      ...legacy.map(c=>({...c,childHouse:paternal})),
+      ...(maternalValid?legacy.map(c=>{
+        const firstConsentScore=c.firstConsentScore+delta[0]!,secondConsentScore=c.secondConsentScore+delta[1]!
+        return {...c,key:c.key+'+CHILD_HOUSE:'+maternal.houseId,firstConsentScore,secondConsentScore,
+          mutuallyAccepted:firstConsentScore>=calibration.consentThreshold&&secondConsentScore>=calibration.consentThreshold,
+          minimumUtility:Math.min(firstConsentScore,secondConsentScore),childHouse:maternal}
+      }):[]),
+    ]
+  }
   const accepted=choices.filter(c=>c.mutuallyAccepted)
   if(accepted.length===0)return {status:'DEFER',reasonCode:'NO_BILATERAL_CONSENT',choices}
   const top=Math.max(...accepted.map(c=>c.minimumUtility))
@@ -124,9 +185,12 @@ export function negotiatedMarriageContract(
   year:number,pair:readonly [Id,Id],choice:ContractChoice,sourceTraceId:Id,
 ):MarriageContract{
   const key=JSON.stringify([year,pair,choice.key])
-  const clause=choice.dynastyId===null?[]:[{
+  const clause:MarriageClause[]=choice.dynastyId===null?[]:[{
     clauseId:'clause:nextgen:'+key,kind:'CHILD_LEGAL_DYNASTY' as const,dynastyId:choice.dynastyId,
   }]
+  const house=choice.childHouse
+  if(house?.basis==='MATERNAL_CONTRACT_CLAUSE')clause.push({clauseId:'clause:nextgen-house:'+key,
+    kind:'CHILD_HOUSE_AFFILIATION',houseId:house.houseId,sourcePersonId:house.sourcePersonId})
   return {contractId:'contract:nextgen:'+key,
     evidenceId:'evidence:nextgen-agreement:'+sourceTraceId,clauses:clause}
 }
