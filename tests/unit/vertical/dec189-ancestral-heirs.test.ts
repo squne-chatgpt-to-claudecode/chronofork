@@ -405,10 +405,31 @@ describe('DEC-189: 実A評価器の土地・CROWN審査（新旧構成の比較�
     const right = person('right', 'FEMALE', 1211, { fatherId: 'twin-b' })
     const converged = { ...w, persons: w.persons.map(p => p.personId === 'synthetic-cousin'
       ? { ...p, birthYear: 1240, fatherId: 'left', motherId: 'right' } : p).concat([a, b, left, right]) }
-    expect(holder(landYear(landPending(converged), 'RECORDED_COMMON_ANCESTOR').world, LAND))
-      .toEqual({ status: 'HELD', personId: 'synthetic-cousin' })
-    expect(holder(crownYear(converged, 'RECORDED_COMMON_ANCESTOR').world, CROWN))
-      .toEqual({ status: 'HELD', personId: 'synthetic-cousin' })
+    const convergedLand = landYear(landPending(converged), 'RECORDED_COMMON_ANCESTOR')
+    const convergedCrown = crownYear(converged, 'RECORDED_COMMON_ANCESTOR')
+    expect(holder(convergedLand.world, LAND)).toEqual({ status: 'HELD', personId: 'synthetic-cousin' })
+    expect(holder(convergedCrown.world, CROWN)).toEqual({ status: 'HELD', personId: 'synthetic-cousin' })
+    for (const run of [convergedLand, convergedCrown]) {
+      const trace = run.traces.find(t => t.candidates[0]?.inputs.heirReviewStatus === 'READY')
+      expect(trace?.candidates[0]?.inputs.heirSearch).toMatchObject({ representationGroups: [{ branches: [
+        { branchHeadId: 'twin-a', reviewed: [{ personId: 'twin-a', parentIds: ['synthetic-uncle'] },
+          { personId: 'left', parentIds: ['twin-a'] }, { personId: 'synthetic-cousin', parentIds: ['left'] }] },
+        { branchHeadId: 'twin-b', reviewed: [{ personId: 'twin-b', parentIds: ['synthetic-uncle'] },
+          { personId: 'right', parentIds: ['twin-b'] }, { personId: 'synthetic-cousin', parentIds: ['right'] }] },
+      ] }] })
+    }
+    const unresolved1 = person('unknown-a', 'MALE', 1215, { fatherId: 'twin-a', alive: true, legalDynasty: undetermined })
+    const unresolved2 = person('unknown-b', 'MALE', 1215, { fatherId: 'twin-b', alive: true, legalDynasty: undetermined })
+    const [unknownLand, unknownCrown] = runBoth([a, b, unresolved1, unresolved2])
+    for (const run of [unknownLand, unknownCrown]) {
+      expect(run.traces.find(t => t.status === 'DEFER' && t.reasonCodes.includes('SAME_PRIORITY_BIRTH_YEAR'))?.candidates[0]?.inputs.heirSearch)
+        .toMatchObject({ representationGroups: [{ branches: ['unknown-a', 'unknown-b'].map(personId => ({
+          reasonCode: 'LEGAL_DYNASTY_UNDETERMINED', reviewed: expect.arrayContaining([expect.objectContaining({ personId })]),
+        })) }] })
+    }
+    expect(unknownCrown.world.legal.cases.find(record => record.titleId === CROWN)).toMatchObject({
+      status: 'PENDING', candidatePersonIds: ['unknown-a', 'unknown-b'],
+    })
     const [tieLand, tieCrown] = runBoth([{ ...a, alive: true, deathYear: undefined }, { ...b, alive: true, deathYear: undefined }])
     for (const run of [tieLand, tieCrown]) {
       expect(run.traces.find(t => t.status === 'DEFER' && t.reasonCodes.includes('SAME_PRIORITY_BIRTH_YEAR'))).toMatchObject({

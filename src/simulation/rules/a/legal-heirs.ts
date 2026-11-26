@@ -73,7 +73,7 @@ export function reviewLandHeir(world: WorldState, predecessorId: Id): HeirReview
 
 // DEC-189 / MVP§8.5: 直系・同胞枝で確立しない場合だけ、記録済みの近い共通祖先へ段階的に遡る。
 // 旧reviewLandHeirは既存構成の再現性のため変更しない。選択は評価器構成の明示オプトイン。
-export const ANCESTRAL_HEIR_SEARCH_VERSION = 'dec189-recorded-common-ancestor-6:CALIBRATION_ONLY'
+export const ANCESTRAL_HEIR_SEARCH_VERSION = 'dec189-recorded-common-ancestor-7:CALIBRATION_ONLY'
 export type HeirSearchMode = 'SIBLING_BRANCH' | 'RECORDED_COMMON_ANCESTOR'
 export const HEIR_SEARCH_MODES: readonly HeirSearchMode[] = ['SIBLING_BRANCH', 'RECORDED_COMMON_ANCESTOR']
 
@@ -99,6 +99,12 @@ export type HeirSearchDetail = Readonly<{
   samePriority: readonly Readonly<{
     depth: number; parentIds: readonly Id[]; branchHeadIds: readonly Id[]; tiedPersonIds: readonly Id[]
     candidateIds?: readonly Id[]
+  }>[]
+  /** 同順位で個別審査した代襲枝。空枝・収束・競合を問わず、枝内の根拠を全体順位と分けて残す。 */
+  representationGroups: readonly Readonly<{
+    depth: number
+    parentIds: readonly Id[]
+    branches: readonly IndependentBranchReview[]
   }>[]
   /** 異なる祖先の枝を別々に調べた根拠。枝内READYは全体の後継確定ではない。 */
   independentStages: readonly Readonly<{
@@ -145,9 +151,10 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
   const excluded: { personId: Id; depth: number; reason: HeirSearchDetail['excluded'][number]['reason'] }[] = []
   const samePriority: HeirSearchDetail['samePriority'][number][] = []
   const independentStages: HeirSearchDetail['independentStages'][number][] = []
+  const representationGroups: HeirSearchDetail['representationGroups'][number][] = []
   const ranked: Id[] = []
   const done = (r: HeirReview, decisiveDepth: number | null): AncestralHeirReview => ({
-    ...r, search: { version: ANCESTRAL_HEIR_SEARCH_VERSION, decisiveDepth, steps, reviewed, excluded, samePriority, independentStages },
+    ...r, search: { version: ANCESTRAL_HEIR_SEARCH_VERSION, decisiveDepth, steps, reviewed, excluded, samePriority, representationGroups, independentStages },
   })
   const pending = (code: string, depth: number | null, extra: readonly string[] = []) =>
     done({ status: 'PENDING', reasonCodes: [code, ...extra], rankedCandidateIds: ranked }, depth)
@@ -261,6 +268,7 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
           const heir = yield { open: [head], parentIds: frame.parentIds }
           attempts.push({ heir, evidence: isolate(from, head, frame.parentIds, heir) })
         }
+        representationGroups.push({ depth, parentIds: frame.parentIds, branches: attempts.map(a => a.evidence) })
         const contenders = attempts.filter(a => a.heir || a.evidence.reasonCode)
         const first = contenders[0]
         if (!first) {
@@ -280,7 +288,10 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
           return heir
         }
         const ids = contenders.map(a => a.evidence.branchHeadId)
-        const candidateIds = [...new Set(contenders.flatMap(a => a.heir ? [a.heir.personId] : a.evidence.samePriority.flatMap(tie => tie.candidateIds ?? [])))].sort(cmp)
+        const candidateIds = [...new Set(contenders.flatMap(a => a.heir ? [a.heir.personId] : [
+          ...a.evidence.reviewed.filter(r => r.outcome === 'LEGAL_DYNASTY_UNDETERMINED').map(r => r.personId),
+          ...a.evidence.samePriority.flatMap(tie => tie.candidateIds ?? []),
+        ]))].sort(cmp)
         samePriority.push({ depth, parentIds: frame.parentIds, branchHeadIds: ids, tiedPersonIds: ids, candidateIds })
         unresolved = 'SAME_PRIORITY_BIRTH_YEAR'
         return undefined

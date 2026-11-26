@@ -178,7 +178,10 @@ function succession(base: RuleEvaluator, input: Input): RuleEvaluator {
           ...heir.search.independentStages.flatMap(stage => {
             const top = new Set(stage.possibleTopBranchIds)
             return stage.branches.filter(branch => top.has(branch.branchHeadId)).flatMap(branch =>
-              branch.candidateId === null ? branch.samePriority.flatMap(tie => tie.candidateIds ?? []) : [branch.candidateId])
+              branch.candidateId === null ? [
+                ...branch.reviewed.filter(r => r.outcome === 'LEGAL_DYNASTY_UNDETERMINED').map(r => r.personId),
+                ...branch.samePriority.flatMap(tie => tie.candidateIds ?? []),
+              ] : [branch.candidateId])
           }),
         ] : []
         const rawCandidates = [...new Set([...rankedIds, ...possibleIds])]
