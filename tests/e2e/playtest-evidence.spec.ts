@@ -149,6 +149,20 @@ test('実 Worker の原史・比較のコピーと保存は同じ証跡になる
   await page.getByRole('button', { name: '限定試遊を最初からやり直す' }).click()
   await page.getByText('技術情報', { exact: true }).click()
   await expect(save(a0)).toBeDisabled()
+
+  // 後年の介入では Worker 応答の分岐年初がキー順だけ異なり得る。実計算の比較を採用して保存できること。
+  await page.getByTestId('obs-start').click()
+  await stage(page, 1250)
+  await page.getByRole('button', { name: '翌年', exact: true }).click()
+  await stage(page, 1251)
+  const later = await openIntervention(page)
+  await expect(later).toContainText('観測年 1251年')
+  const laterCompared = await collect(pair, 'a0-a1-1251.json')
+  expect(laterCompared).toMatchObject({ kind: 'COMPARISON', year: 1251,
+    intervention: { firstPersonId, secondPersonId, year: 1251, signedDelta: 20, durationYears: 1 },
+    player: { branches: [{ branch: 'A0', modifierIds: [] }, { branch: 'A1', modifierIds: [laterCompared.intervention!.modifierId] }] } })
+  await later.getByRole('button', { name: '歴史の比較を閉じる' }).click()
+  await expect(save(pair)).toBeDisabled()
   await page.getByRole('button', { name: '限定試遊を退出して通常入口へ' }).click()
   await expect(controls(page).panel).toHaveCount(0)
   expect(errors).toEqual([])
