@@ -10,9 +10,8 @@ import type { EvaluationContext, RuleEvaluator } from '../../engine/evaluators.t
 import type { LegalEvidenceBook } from '../../legal/evidence.ts'
 import { reviewOrdinaryAuthority } from '../../legal/ordinary-authority.ts'
 import type { OrdinaryLaw } from '../../legal/ordinary-authority.ts'
-import { heirReviewerFor } from './legal-heirs.ts'
+import { heirReviewerFor, heirSearchInputs } from './legal-heirs.ts'
 import type { HeirSearchMode } from './legal-heirs.ts'
-import { heirSearchInputs } from './reviewed-succession.ts'
 
 export const CROWN_SUCCESSION_VERSION = 'crown-succession-mvp-1:CALIBRATION_ONLY'
 const cmp = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0

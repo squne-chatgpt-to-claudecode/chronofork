@@ -1,6 +1,6 @@
 // G-03/04 を使う土地相続候補の純粋な順位照合（CALIBRATION_ONLY）。
 // 明示された親子関係・生死・法的王朝所属だけを使用し、婚外の合法性や権限を補完しない。
-import type { Id, Person, WorldState } from '../../contracts/index.ts'
+import type { Id, JsonValue, Person, WorldState } from '../../contracts/index.ts'
 
 export type HeirReview =
   | Readonly<{ status: 'READY'; personId: Id; rankedCandidateIds: readonly Id[]; relation: 'DESCENDANT' | 'COLLATERAL' }>
@@ -231,3 +231,12 @@ export function reviewAncestralHeir(world: WorldState, predecessorId: Id): Ances
 export function heirReviewerFor(mode: HeirSearchMode | undefined): (world: WorldState, predecessorId: Id) => HeirReview | AncestralHeirReview {
   return mode === 'RECORDED_COMMON_ANCESTOR' ? reviewAncestralHeir : reviewLandHeir
 }
+
+/** DEC-189構成だけが探索した段階・候補・除外理由をTraceへ公開する。旧構成のTraceは不変。 */
+export const heirSearchInputs = (heir: HeirReview | AncestralHeirReview | null): Readonly<Record<string, JsonValue>> =>
+  heir && 'search' in heir ? {
+    heirSearch: structuredClone(heir.search) as unknown as JsonValue,
+    heirReviewStatus: heir.status, heirReasonCodes: [...(heir.status === 'PENDING' ? heir.reasonCodes : [])],
+    rankedCandidateIds: [...heir.rankedCandidateIds],
+    heirRelation: heir.status === 'READY' ? heir.relation : null,
+  } : {}

@@ -2,7 +2,7 @@
 // DEC-055。GAME-02/03の権限者を既定推定しない。ここで扱う証拠はCALIBRATION_ONLY。
 // 通常の自律評価器を置換するオプトイン評価器で、全37ルールの正式IMPLEMENTED化ではない。
 import type {
-  ControllerRef, DecisionTraceDraft, DomainCommand, Id, JsonValue, LegalCaseSetCommand,
+  ControllerRef, DecisionTraceDraft, DomainCommand, Id, LegalCaseSetCommand,
   LegalTitleTransferCommand, ControlMandateSetCommand, WorldState, Year,
 } from '../../contracts/index.ts'
 import type { EvaluatorMap, RuleEvaluator } from '../../engine/evaluators.ts'
@@ -14,8 +14,8 @@ import type { OrdinaryLaw } from '../../legal/ordinary-authority.ts'
 import { mandateEffectiveNow, reviewOrdinaryAuthority, reviewOrdinaryDelegation, validateOrdinaryLaws } from '../../legal/ordinary-authority.ts'
 import { createASuc04WorldStateEvaluator } from './asuc04-worldstate.ts'
 import { createATit07EvidenceEvaluator } from './atit07-title-transfer.ts'
-import { HEIR_SEARCH_MODES, heirReviewerFor } from './legal-heirs.ts'
-import type { AncestralHeirReview, HeirReview, HeirSearchMode } from './legal-heirs.ts'
+import { HEIR_SEARCH_MODES, heirReviewerFor, heirSearchInputs } from './legal-heirs.ts'
+import type { HeirSearchMode } from './legal-heirs.ts'
 
 export const REVIEWED_LEGAL_VERSION = 'reviewed-normal-succession-1:CALIBRATION_ONLY'
 
@@ -78,14 +78,6 @@ const predecessorOf = (codes: readonly string[]) =>
   codes.find(x => x.startsWith('PREDECESSOR_ID:'))?.slice('PREDECESSOR_ID:'.length)
 const reason = (code: string) => ['CALIBRATION_ONLY', 'DEC_055_PENDING_REVIEW', code]
 const safe = (x: unknown) => x !== null && typeof x === 'object'
-/** DEC-189構成だけが探索した段階・候補・除外理由をTraceへ公開する。旧構成のTraceは不変。 */
-export const heirSearchInputs = (heir: HeirReview | AncestralHeirReview | null) =>
-  heir && 'search' in heir ? {
-    heirSearch: structuredClone(heir.search) as unknown as JsonValue,
-    heirReviewStatus: heir.status, heirReasonCodes: [...(heir.status === 'PENDING' ? heir.reasonCodes : [])],
-    rankedCandidateIds: [...heir.rankedCandidateIds],
-    heirRelation: heir.status === 'READY' ? heir.relation : null,
-  } : {}
 
 /** 構造・固有IDだけを入口で検査。真正な権限は毎年、現WorldStateとbookの記録で判定する。 */
 export function createReviewedLegalEvaluators(input: ReviewedLegalInput): ReviewedLegalFactoryResult {
