@@ -105,6 +105,42 @@ describe('correspondTraces: 判断の意味での対応付け',()=>{
     const sd=compareTraces([tr('a',P('p'),['c'],{eventIds:['e']})],[tr('b',P('p'),['c'],{eventIds:['e']})],[sc(1)],[sc(2)])
     expect(sd.deltas).toHaveLength(1)
   })
+  it('跨年Eventもログ末尾の同一IDを各枝で採用し、参照順には依存しない',()=>{
+    const ev=(eventId:string,semanticEventKey:string,year:number):EventLogEntry=>({eventId,semanticEventKey,
+      year,phase:3,eventType:'X',involvedRefs:[],stateChanges:[],sourceTraceIds:[]})
+    const a0=[tr('a',P('p'),['c'],{eventIds:['e','f0']})]
+    const a1=[tr('b',P('p'),['c'],{eventIds:['f1','e']})]
+    const e0=[ev('e','old0',1260),ev('f0','F',1260),ev('e','K',1259)]
+    const e1=[ev('e','old1',1260),ev('f1','F',1260),ev('e','K',1259)]
+    expect(compareTraces(a0,a1,e0,e1).summary).toMatchObject({matched:1,unchanged:1,changed:0})
+    expect(compareTraces(a0,a1,e0,[...e1].reverse()).deltas).toEqual([
+      {kind:'CHANGED',traceId:'b',ruleId:'B-004',before:a0[0],after:a1[0]},
+    ])
+  })
+  it('欠落EventはIDで区別し、別枝の実Eventで補完しない',()=>{
+    const withEvent=(eventId:string)=>[tr('t',P('p'),['c'],{eventIds:[eventId]})]
+    const a0=withEvent('missing')
+    const event:EventLogEntry={eventId:'missing',semanticEventKey:'K',year:1260,phase:3,eventType:'X',
+      involvedRefs:[],stateChanges:[],sourceTraceIds:[]}
+    expect(compareTraces(a0,withEvent('missing'),[],[]).summary).toMatchObject({matched:1,unchanged:1})
+    expect(compareTraces(a0,withEvent('other'),[],[]).summary.changed).toBe(1)
+    expect(compareTraces(a0,withEvent('missing'),[event],[]).summary.changed).toBe(1)
+  })
+  it('一対一の参照がない枝ではEventLogを走査しない',()=>{
+    const a0=[tr('a',P('matched'),['c']),tr('gone',P('gone'),['c'],{eventIds:['gone-event']}),
+      tr('x0',P('ambiguous'),['c'],{eventIds:['x-event']}),tr('x1',P('ambiguous'),['c'])]
+    const a1=[tr('b',P('matched'),['c'],{eventIds:['e']}),tr('new',P('new'),['c']),
+      tr('y0',P('ambiguous'),['c']),tr('y1',P('ambiguous'),['c'])]
+    const event:EventLogEntry={eventId:'e',semanticEventKey:'K',year:1260,phase:3,eventType:'X',
+      involvedRefs:[],stateChanges:[],sourceTraceIds:[]}
+    const unread=new Proxy([{...event,eventId:'gone-event'}],{get(target,key,receiver){
+      if(key!=='length') throw new Error('参照不要のEventLogにアクセスした')
+      return Reflect.get(target,key,receiver)
+    }})
+    const r=compareTraces(a0,a1,unread,[event])
+    expect(r.summary).toEqual({matched:1,unchanged:0,changed:1,a1Only:1,a0Only:1,ambiguousGroups:1,ambiguousTraces:4})
+    expect(r.deltas.map(d=>d.kind)).toEqual(['CHANGED','A1_ONLY','A0_ONLY','AMBIGUOUS'])
+  })
   it.each([
     ['modifierIds',{modifierIds:['m']}],['random',{random:{stream:'ENDOGENOUS' as const,key:'k',value:1}}],
     ['reasonCodes',{reasonCodes:['R']}],['selectedCandidateId',{selectedCandidateId:'c'}],
@@ -130,6 +166,21 @@ describe('実計算: seed 20260101 / 1260年 / 人物04×05 / +20 / 5年',()=>{
       matched+=k.pairs.length
     }
     expect(matched).toBeGreaterThan(0)
+  })
+  it('有効年の比較で実履歴の全EventLogをmapしない',()=>{
+    expect(r.ok).toBe(true)
+    if(!r.ok)return
+    const c=r.comparison
+    const year=1300
+    const noFullMap=(events:readonly EventLogEntry[])=>new Proxy(events,{get(target,key,receiver){
+      if(key==='map') throw new Error('全EventLogをmapした')
+      return Reflect.get(target,key,receiver)
+    }})
+    const a0=c.a0.result,a1=c.a1.result
+    const d=compareTraces(a0.decisionTraces.filter(t=>t.year===year),a1.decisionTraces.filter(t=>t.year===year),
+      noFullMap(a0.eventLog),noFullMap(a1.eventLog))
+    expect(d.summary.matched).toBeGreaterThan(0)
+    expect(d.correspondence.pairs.some(p=>p.before.eventIds.length>0&&p.after.eventIds.length>0)).toBe(true)
   })
   it('各枝の実traceIdとEvent→Traceリンクが保持され、対象B-004の変化は隠れない',()=>{
     if(!r.ok)return

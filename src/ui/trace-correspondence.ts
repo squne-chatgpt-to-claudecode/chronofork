@@ -63,13 +63,23 @@ export function correspondTraces(a0:readonly DecisionTrace[],a1:readonly Decisio
   return {pairs,a1Only,a0Only,ambiguous}
 }
 
+function indexReferencedEvents(pairs:readonly TracePair[],side:keyof TracePair,events:readonly EventLogEntry[]){
+  const ids=new Set<Id>()
+  for(const p of pairs)for(const id of p[side].eventIds)ids.add(id)
+  if(ids.size===0)return undefined
+  let index:Map<Id,EventLogEntry>|undefined
+  // 年をまたぐ参照も解決し、同一IDが複数あれば従来どおりログ末尾側を採用する。
+  for(const e of events)if(ids.has(e.eventId))(index??=new Map()).set(e.eventId,e)
+  return index
+}
+
 /** traceId・eventIdsの採番差を除き、判断内容と因果（Event→意味キー）を比較する。 */
-function semanticView(t:DecisionTrace,events:ReadonlyMap<Id,EventLogEntry>){
+function semanticView(t:DecisionTrace,events:ReadonlyMap<Id,EventLogEntry>|undefined){
   const {traceId:_t,eventIds,...rest}=t
   void _t
   // Eventは意味キーに加え、種別・関与対象・状態差分も比較する（sourceTraceIdsは採番差なので除外）。
   const ev=eventIds.map(id=>{
-    const e=events.get(id)
+    const e=events?.get(id)
     return e?JSON.stringify([e.semanticEventKey,e.eventType,e.involvedRefs,e.stateChanges]):'?'+id
   }).sort()
   return JSON.stringify({...rest,events:ev})
@@ -80,7 +90,7 @@ export function compareTraces(
   a0Events:readonly EventLogEntry[],a1Events:readonly EventLogEntry[],
 ):Readonly<{deltas:readonly TraceDelta[];summary:TraceSummary;correspondence:TraceCorrespondence}>{
   const c=correspondTraces(a0,a1)
-  const e0=new Map(a0Events.map(e=>[e.eventId,e])),e1=new Map(a1Events.map(e=>[e.eventId,e]))
+  const e0=indexReferencedEvents(c.pairs,'before',a0Events),e1=indexReferencedEvents(c.pairs,'after',a1Events)
   const deltas:TraceDelta[]=[]
   let unchanged=0
   for(const p of c.pairs){
