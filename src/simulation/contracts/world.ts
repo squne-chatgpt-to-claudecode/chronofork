@@ -114,6 +114,25 @@ export type ChildLegalDynastyClause = Readonly<{
 }>
 
 /**
+ * DEC-190: A-LEG-01 が登録時に B-005 の当年 Trace と照合して確定した、母方家門条項の双方合意の内容。
+ * 出生時はこの記録から A が発行する契約を再構成し、保存済みの契約と一致する場合だけ条項を用いる
+ * （当年の交渉を現在の得点で再計算しない）。後付け・改変・他婚姻からの流用を検出するための記録で、暗号署名ではない。
+ */
+export type ChildHouseAgreementRecord = Readonly<{
+  registeredYear: Year
+  personIds: readonly [Id, Id] // ID 昇順
+  /** A-LEG-01 が照合した B-005 ACCEPT の TraceID。 */
+  sourceTraceId: Id
+  /** B-005 が選択し A が同一入力で再評価した契約案のキー。 */
+  contractKey: string
+  /** 同じ契約案の王朝条項。王朝条項の無い案では省略。 */
+  dynastyId?: Id
+  firstConsentScore: number
+  secondConsentScore: number
+  consentThreshold: number
+}>
+
+/**
  * DEC-190: 出生児の家門所属を父方原則の例外として母方家門へ置く明示条項。法的王朝・出身人口集団とは独立。
  * MVPでは婚姻当事者である母（sourcePersonId）の実在する家門だけを指定できる。無条項は父方。
  */
@@ -122,6 +141,7 @@ export type ChildHouseAffiliationClause = Readonly<{
   kind: 'CHILD_HOUSE_AFFILIATION'
   houseId: Id
   sourcePersonId: Id
+  agreement: ChildHouseAgreementRecord
 }>
 
 export type MarriageClause = ChildLegalDynastyClause | ChildHouseAffiliationClause

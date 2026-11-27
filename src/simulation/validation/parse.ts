@@ -341,10 +341,21 @@ function marriageContract(d: Sink, v: unknown, p: string): MarriageContract {
     clauses: arr(d, o, 'clauses', p, (cv, cp): MarriageClause => {
       // DEC-190の家門条項は王朝条項と別のフィールド集合。旧JSONの王朝条項は従来どおり読む。
       if (isPlainObject(cv) && cv['kind'] === 'CHILD_HOUSE_AFFILIATION') {
-        const co = obj(d, cv, cp, ['clauseId', 'kind', 'houseId', 'sourcePersonId'])
+        const co = obj(d, cv, cp, ['clauseId', 'kind', 'houseId', 'sourcePersonId', 'agreement'])
+        const ap = `${cp}.agreement`
+        const ao = obj(d, co['agreement'], ap, ['registeredYear', 'personIds', 'sourceTraceId', 'contractKey',
+          'dynastyId', 'firstConsentScore', 'secondConsentScore', 'consentThreshold'])
+        const dynastyId = optStr(d, ao, 'dynastyId', ap)
         return {
           clauseId: str(d, co, 'clauseId', cp), kind: 'CHILD_HOUSE_AFFILIATION',
           houseId: str(d, co, 'houseId', cp), sourcePersonId: str(d, co, 'sourcePersonId', cp),
+          agreement: {
+            registeredYear: num(d, ao, 'registeredYear', ap), personIds: pair(d, ao, 'personIds', ap),
+            sourceTraceId: str(d, ao, 'sourceTraceId', ap), contractKey: str(d, ao, 'contractKey', ap),
+            ...(dynastyId === undefined ? {} : { dynastyId }),
+            firstConsentScore: num(d, ao, 'firstConsentScore', ap), secondConsentScore: num(d, ao, 'secondConsentScore', ap),
+            consentThreshold: num(d, ao, 'consentThreshold', ap),
+          },
         }
       }
       const co = obj(d, cv, cp, ['clauseId', 'kind', 'dynastyId'])

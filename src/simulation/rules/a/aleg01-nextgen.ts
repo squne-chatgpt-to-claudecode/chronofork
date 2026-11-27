@@ -131,7 +131,7 @@ export function createALeg01NextgenEvaluator(input:NextgenMarriageInput):Nextgen
       }
       if(matching[0])registrations.push(matching[0].registration)
       const candidateId='candidate:nextgen:'+JSON.stringify([ctx.year,pair,agreement.choice.key])
-      const contract=negotiatedMarriageContract(ctx.year,pair,agreement.choice,verified.traceId)
+      const contract=negotiatedMarriageContract(ctx.year,pair,agreement.choice,verified.traceId,cal.consentThreshold)
       // 候補は当年の同意Traceから生成したものだけ。過去・他婚姻の契約を流用しない。
       candidates.push({
         candidateId,personIds:pair,contract,

@@ -9,7 +9,7 @@ import { GOAL_YEAR, START_YEAR } from '../../contracts/index.ts'
 import type { EvaluationContext, RuleEvaluator } from '../../engine/evaluators.ts'
 import { EvaluationFailure } from '../../engine/evaluators.ts'
 import { normalizePersonPair, pairKey } from '../../intervention/index.ts'
-import { childHouseContractIssue } from '../../legal/child-house.ts'
+import { childHouseRegistrationIssue } from '../../legal/child-house.ts'
 
 export const ALEG01_RULE_VERSION = 'aleg01-explicit-test-approval-0:CALIBRATION_ONLY'
 
@@ -107,7 +107,7 @@ export function createALeg01CalibrationEvaluator(
         }
         if (!issuerValid) reason = 'ISSUER_NOT_FOUND'
         else if (contract.clauses.some((c) => c.kind === 'CHILD_LEGAL_DYNASTY' && !world.legal.dynasties.some((d) => d.dynastyId === c.dynastyId))) reason = 'CONTRACT_DYNASTY_UNRESOLVED'
-        else if (childHouseContractIssue(world, [a, b], contract) !== null) reason = 'CONTRACT_HOUSE_CLAUSE_INVALID'
+        else if (childHouseRegistrationIssue(world, ctx.year, pair, [a, b], contract, ctx.priorTraces ?? []) !== null) reason = 'CONTRACT_HOUSE_CLAUSE_INVALID'
         else {
           status = 'ACCEPT'
           reason = 'EXPLICIT_CALIBRATION_APPROVAL'

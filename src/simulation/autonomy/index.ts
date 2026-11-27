@@ -96,7 +96,7 @@ export function createAutonomousCalibrationEvaluators(input:AutonomousEvaluatorI
   // 家門条項の交渉と出生時の父方原則は一体で選ぶ。片方だけでは条項が出生へ反映されない/母方既定が残る。
   if(input.childHouseAffiliation!==undefined && input.childHouseAffiliation!=='DEC190_PATERNAL_PRINCIPLE')
     return {ok:false,issues:['INVALID_CHILD_HOUSE_AFFILIATION_MODE']}
-  if(input.nextgenMarriage && (input.nextgenMarriage.calibration?.childHouse!==undefined)!==(input.childHouseAffiliation!==undefined))
+  if((input.nextgenMarriage?.calibration?.childHouse!==undefined)!==(input.childHouseAffiliation!==undefined))
     return {ok:false,issues:['CHILD_HOUSE_MODE_MISMATCH']}
   if(input.abstractMarriageSupply && !Array.isArray(input.branchStartWorld.demographics?.anonymousBirthHistory))
     return {ok:false,issues:['ANONYMOUS_BIRTH_HISTORY_REQUIRED']}

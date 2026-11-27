@@ -5,10 +5,12 @@ import { createExperimentalWorld, createExperimentalOrdinaryLegalTrial, NALVEN_D
 import * as experimental from '../../../src/scenario/experimental/index.ts'
 import { createAutonomousCalibrationEvaluators } from '../../../src/simulation/autonomy/index.ts'
 import type { AutonomyCalibration } from '../../../src/simulation/autonomy/index.ts'
-import type { ChildHouseAffiliationClause, Marriage, WorldState } from '../../../src/simulation/contracts/index.ts'
+import type { ChildHouseAffiliationClause, ChildHouseAgreementRecord, Marriage, MarriageContract, WorldState } from '../../../src/simulation/contracts/index.ts'
 import { runYear } from '../../../src/simulation/engine/index.ts'
 import type { EvaluatorMap } from '../../../src/simulation/engine/index.ts'
-import { childHouseClauseIssue, resolveChildHouseAffiliation } from '../../../src/simulation/legal/child-house.ts'
+import { childHouseAgreementIssue, childHouseClauseIssue, childHouseRegistrationIssue, resolveChildHouseAffiliation }
+  from '../../../src/simulation/legal/child-house.ts'
+import { nextgenMarriageContract } from '../../../src/simulation/legal/nextgen-contract-ids.ts'
 import type { ChildHouseContractCalibration, NextgenContractCalibration } from '../../../src/simulation/legal/nextgen-contract.ts'
 import { EXPERIMENTAL_NEXTGEN_CONTRACT, validateNextgenContractCalibration } from '../../../src/simulation/legal/nextgen-contract.ts'
 import { reviewDomesticMarriageEligibility } from '../../../src/simulation/legal/nextgen-marriage.ts'
@@ -185,44 +187,154 @@ describe('DEC-190 出生時の家門: 実年次経路（B004→B005→A-LEG-01�
 })
 
 describe('DEC-190 不成立・不正な例外', () => {
-  const maternal = (w: WorldState, x: Partial<ChildHouseAffiliationClause>): WorldState => ({ ...w, legal: { ...w.legal,
-    marriages: w.legal.marriages.map((m): Marriage => ({ ...m, contract: { ...m.contract!, clauses: [...m.contract!.clauses,
-      { clauseId: 'tampered-house', kind: 'CHILD_HOUSE_AFFILIATION', houseId: CARDON, sourcePersonId: P5, ...x }] } })) } })
+  type Tamper = (c: ChildHouseAffiliationClause) => ChildHouseAffiliationClause
+  const TRADE = { ...TRADE_DYNASTY, childHouse: TRADE_HOUSE }
+  /** 父方案で正規に登録された婚姻（家門条項なし）。 */
   const married = () => done(step(createExperimentalWorld(), [[P2, P5]], { ...DYNASTY, childHouse: V4_HOUSE })).world
-
-  it.each([
-    ['第三者家門', { houseId: VARGAS }, 'CHILD_HOUSE_NOT_MATERNAL_HOUSE'],
-    ['父方と同じ重複案', { houseId: NALVEN }, 'CHILD_HOUSE_NOT_MATERNAL_HOUSE'],
-    ['出典が父', { sourcePersonId: P2, houseId: NALVEN }, 'CHILD_HOUSE_SOURCE_NOT_MOTHER'],
-  ] as const)('登録済み契約の%s条項は出生を保留し、父方fallback・人物・出生枠消費をしない', (_n, x, code) => {
-    const w = maternal(married(), x)
+  /** 実年次経路の双方合意で正規に成立した母方例外の婚姻と、その年のTrace。 */
+  const maternalYear = () => done(step(createExperimentalWorld(), [[P2, P5]], TRADE))
+  const withContract = (w: WorldState, f: (c: MarriageContract) => MarriageContract, m = (x: Marriage) => x): WorldState =>
+    ({ ...w, legal: { ...w.legal, marriages: w.legal.marriages.map((x): Marriage => m({ ...x, contract: f(x.contract!) })) } })
+  const houseClause = (w: WorldState) => w.legal.marriages[0]!.contract!.clauses.find(c => c.kind === 'CHILD_HOUSE_AFFILIATION')!
+  const tamper = (w: WorldState, f: Tamper): WorldState => withContract(w, c => ({ ...c,
+    clauses: c.clauses.map(x => x.kind === 'CHILD_HOUSE_AFFILIATION' ? f(x) : x) }))
+  /** 父方案の登録済み契約へ、元の契約ID・証拠IDのまま母方条項を後付けする。 */
+  const appended = (w: WorldState, clause: unknown): WorldState => withContract(w, c => ({ ...c,
+    clauses: [...c.clauses, clause as ChildHouseAffiliationClause] }))
+  /** 出生年の実評価: 子・出生Event・出生枠請求がなく、DEFERで理由を記録し、母の家門も変わらない。 */
+  const expectBirthDeferred = (w: WorldState, code: string) => {
     expect(validateWorldState(w).ok).toBe(true)
-    const r = done(step(w, [[P2, P5]], { ...DYNASTY, childHouse: V4_HOUSE }))
+    const r = done(step(w, [[P2, P5]], TRADE))
     expect(childOf(r.world, P2, P5)).toHaveLength(0)
     expect(claimedSlotGroups(r)).toEqual([])
-    const slot = r.traces.find(t => t.ruleId === 'B-002')!.candidates[0]!.inputs
-    expect(slot).toMatchObject({ claimedBirths: 0, houseId: null, childHouseBasis: null })
     expect(r.events.filter(e => e.eventType === 'PERSON_BIRTH')).toHaveLength(0)
     const t = b002(r)[0]!
     expect(t.status).toBe('DEFER')
     expect(t.reasonCodes).toContain(code)
+    expect(t.candidates[0]!.inputs).toMatchObject({ claimedBirths: 0, houseId: null, childHouseBasis: null })
     expect(r.world.persons.find(p => p.personId === P5)!.houseId).toBe(CARDON)
+  }
+
+  it('正規の母方例外: 登録時の合意記録はB-005の当年Traceと一致し、Aの登録審査・出生時の結合照合を通る', () => {
+    const y = maternalYear(), w = y.world
+    const m = w.legal.marriages[0]!, clause = houseClause(w)
+    const trace = b005(y)
+    expect(clause.agreement).toEqual({ registeredYear: 1250, personIds: [P2, P5], sourceTraceId: trace.traceId,
+      contractKey: 'CHILD_DYNASTY:' + NALVEN_DYNASTY_ID + '+CHILD_HOUSE:' + CARDON, dynastyId: NALVEN_DYNASTY_ID,
+      firstConsentScore: clause.agreement.firstConsentScore, secondConsentScore: clause.agreement.secondConsentScore,
+      consentThreshold: TRADE.consentThreshold })
+    const option = (trace.candidates[0]!.inputs.contractOptions as Record<string, unknown>[]).find(o => o.key === clause.agreement.contractKey)!
+    expect(option).toMatchObject({ mutuallyAccepted: true, firstConsentScore: clause.agreement.firstConsentScore,
+      secondConsentScore: clause.agreement.secondConsentScore })
+    expect(m.contract!.evidenceId).toBe('evidence:nextgen-agreement:' + trace.traceId)
+    expect(childHouseAgreementIssue(m, m.contract)).toBeNull()
+    const [f, mo] = [P2, P5].map(id => w.persons.find(p => p.personId === id)!) as [never, never]
+    expect(childHouseRegistrationIssue(w, 1250, [P2, P5], [f, mo], m.contract, y.traces)).toBeNull()
+    expect(resolveChildHouseAffiliation(w, f, mo, m)).toMatchObject({ status: 'RESOLVED', houseId: CARDON, basis: 'MATERNAL_CONTRACT_CLAUSE' })
+  })
+
+  it('Aの登録審査: 当年のB-005合意Traceが無い・一致しない手動の家門条項契約は登録しない', () => {
+    const y = maternalYear(), w = y.world
+    const m = w.legal.marriages[0]!
+    const parties = [P2, P5].map(id => w.persons.find(p => p.personId === id)!) as [never, never]
+    const review = (contract: MarriageContract | undefined, traces = y.traces, year = 1250) =>
+      childHouseRegistrationIssue(w, year, [P2, P5], parties, contract, traces)
+    // 合意記録と契約の形は自己整合でも、Traceが無い手動候補・承認記録は証明にならない。
+    expect(review(m.contract, [])).toBe('CHILD_HOUSE_AGREEMENT_TRACE_MISSING')
+    expect(review(m.contract, y.traces.filter(t => t.ruleId !== 'B-005'))).toBe('CHILD_HOUSE_AGREEMENT_TRACE_MISSING')
+    const trace = b005(y)
+    const deferred = { ...trace, status: 'DEFER' as const }
+    expect(review(m.contract, [deferred])).toBe('CHILD_HOUSE_AGREEMENT_TRACE_MISSING')
+    expect(review(m.contract, [trace], 1251)).toBe('CHILD_HOUSE_AGREEMENT_MARRIAGE_MISMATCH')
+    // 得点の書換えは合意記録の結合だけでは検出できないため、登録時にTraceの選択案と照合する。
+    const scores = tamper(w, c => ({ ...c, agreement: { ...c.agreement, firstConsentScore: c.agreement.firstConsentScore + 1 } }))
+    expect(review(scores.legal.marriages[0]!.contract, [trace])).toBe('CHILD_HOUSE_AGREEMENT_TRACE_MISMATCH')
+    const otherChoice = { ...trace, candidates: [{ ...trace.candidates[0]!, inputs: { ...trace.candidates[0]!.inputs,
+      selectedContractKey: 'CHILD_DYNASTY:' + NALVEN_DYNASTY_ID, selectedChildHouse: { basis: 'PATERNAL_DEFAULT', houseId: NALVEN } } }] }
+    expect(review(m.contract, [otherChoice])).toBe('CHILD_HOUSE_AGREEMENT_TRACE_MISMATCH')
+    expect(review(appended(married(), { ...houseClause(w) }).legal.marriages[0]!.contract, [trace]))
+      .toBe('CHILD_HOUSE_AGREEMENT_CONTRACT_MISMATCH')
+  })
+
+  it('合意記録なしで父方案の契約へ後付けした母方条項は解決せず、年次計算も出生しない（父方fallbackなし）', () => {
+    const w = appended(married(), { clauseId: 'tampered-house', kind: 'CHILD_HOUSE_AFFILIATION', houseId: CARDON, sourcePersonId: P5 })
+    const m = w.legal.marriages[0]!
+    const [f, mo] = [P2, P5].map(id => w.persons.find(p => p.personId === id)!) as [never, never]
+    expect(resolveChildHouseAffiliation(w, f, mo, m)).toEqual({ status: 'UNRESOLVED', reasonCode: 'CHILD_HOUSE_AGREEMENT_MISSING' })
+    expect(validateWorldState(JSON.parse(JSON.stringify(w))).diagnostics.map(i => i.code)).toContain('MISSING_FIELD')
+    // 記録の無い条項は保存形式として不正。年次計算は入力検証で停止し、出生・出生枠請求を作らない。
+    const r = step(w, [[P2, P5]], TRADE)
+    expect(r.status).toBe('HALTED')
+    expect(r.status === 'HALTED' && r.halt.code).toBe('INVALID_INPUT_WORLD')
+    expect(childOf(r.world, P2, P5)).toHaveLength(0)
+  })
+
+  it.each([
+    // 正規の母方婚姻の条項・合意記録を他婚姻へ流用（元の契約ID・証拠IDのまま）。
+    ['正規の合意記録を父方案の契約へ後付け', (w: WorldState) => appended(married(), houseClause(w)), 'CHILD_HOUSE_AGREEMENT_CONTRACT_MISMATCH'],
+    // 父方案の契約ID・証拠IDと矛盾しない自己申告の記録を作っても、Aの発行する母方案の契約IDとは一致しない。
+    ['父方案の契約に自己申告の合意記録を後付け', () => {
+      const p = married(), c = p.legal.marriages[0]!.contract!
+      const agreement: ChildHouseAgreementRecord = { registeredYear: 1250, personIds: [P2, P5],
+        sourceTraceId: c.evidenceId.replace('evidence:nextgen-agreement:', ''),
+        contractKey: 'CHILD_DYNASTY:' + NALVEN_DYNASTY_ID + '+CHILD_HOUSE:' + CARDON, dynastyId: NALVEN_DYNASTY_ID,
+        firstConsentScore: 100, secondConsentScore: 100, consentThreshold: 15 }
+      return appended(p, { clauseId: 'tampered-house', kind: 'CHILD_HOUSE_AFFILIATION', houseId: CARDON, sourcePersonId: P5, agreement })
+    }, 'CHILD_HOUSE_AGREEMENT_CONTRACT_MISMATCH'],
+    ['条項IDの改変', (w: WorldState) => tamper(w, c => ({ ...c, clauseId: 'tampered-house' })), 'CHILD_HOUSE_AGREEMENT_CONTRACT_MISMATCH'],
+    ['同じ契約の王朝条項の改変', (w: WorldState) => withContract(w, c => ({ ...c, clauses: c.clauses.filter(x => x.kind !== 'CHILD_LEGAL_DYNASTY') })),
+      'CHILD_HOUSE_AGREEMENT_CONTRACT_MISMATCH'],
+    ['合意案キーの改変', (w: WorldState) => tamper(w, c => ({ ...c, agreement: { ...c.agreement, contractKey: 'NO_CLAUSE+CHILD_HOUSE:' + CARDON } })),
+      'CHILD_HOUSE_AGREEMENT_KEY_MISMATCH'],
+    ['別Traceの証拠へ差替え', (w: WorldState) => tamper(w, c => ({ ...c, agreement: { ...c.agreement, sourceTraceId: 'trace:other' } })),
+      'CHILD_HOUSE_AGREEMENT_CONTRACT_MISMATCH'],
+    ['片方の得点が閾値未満', (w: WorldState) => tamper(w, c => ({ ...c, agreement: { ...c.agreement, secondConsentScore: c.agreement.consentThreshold - 1 } })),
+      'CHILD_HOUSE_AGREEMENT_CONSENT_MISSING'],
+    ['別年の記録', (w: WorldState) => tamper(w, c => ({ ...c, agreement: { ...c.agreement, registeredYear: 1249 } })),
+      'CHILD_HOUSE_AGREEMENT_MARRIAGE_MISMATCH'],
+    ['婚姻の登録年を別年へ', (w: WorldState) => withContract(w, c => c, m => ({ ...m, registeredYear: 1249 })),
+      'CHILD_HOUSE_AGREEMENT_MARRIAGE_MISMATCH'],
+    ['第三者家門', (w: WorldState) => tamper(w, c => ({ ...c, houseId: VARGAS })), 'CHILD_HOUSE_NOT_MATERNAL_HOUSE'],
+    ['父方と同じ重複案', (w: WorldState) => tamper(w, c => ({ ...c, houseId: NALVEN })), 'CHILD_HOUSE_NOT_MATERNAL_HOUSE'],
+    ['出典が父', (w: WorldState) => tamper(w, c => ({ ...c, sourcePersonId: P2, houseId: NALVEN })), 'CHILD_HOUSE_SOURCE_NOT_MOTHER'],
+  ] as const)('%sは出生を保留し、父方fallback・人物・出生枠消費をしない', (_n, make, code) => {
+    expectBirthDeferred(make(maternalYear().world), code)
+  })
+
+  it('別ペアの婚姻への合意記録の流用は解決しない', () => {
+    const w = maternalYear().world
+    const m = w.legal.marriages[0]!
+    const other: Marriage = { ...m, marriageId: 'm-other', personIds: [P4, P5] }
+    expect(childHouseAgreementIssue(other, m.contract)).toBe('CHILD_HOUSE_AGREEMENT_MARRIAGE_MISMATCH')
   })
 
   it('管轄外の母方家門・複数条項・契約証拠欠落は解決しない', () => {
-    const w = maternal(married(), {})
+    const w = maternalYear().world
     const m = w.legal.marriages[0]!
     const [f, mo] = [P2, P5].map(id => w.persons.find(p => p.personId === id)!) as [never, never]
     expect(resolveChildHouseAffiliation(w, f, mo, m)).toMatchObject({ status: 'RESOLVED', houseId: CARDON, basis: 'MATERNAL_CONTRACT_CLAUSE' })
     const foreign = { ...w, houses: w.houses.map(h => h.houseId === CARDON ? { ...h, countryId: 'country-margald' } : h) }
     expect(resolveChildHouseAffiliation(foreign, f, mo, m)).toEqual({ status: 'UNRESOLVED', reasonCode: 'CHILD_HOUSE_JURISDICTION_MISMATCH' })
-    const twice = maternal(w, { clauseId: 'second' })
+    const twice = appended(w, { ...houseClause(w), clauseId: 'second' })
     expect(resolveChildHouseAffiliation(twice, f, mo, twice.legal.marriages[0]!)).toEqual({ status: 'UNRESOLVED', reasonCode: 'AMBIGUOUS_CHILD_HOUSE_CLAUSES' })
     expect(validateWorldState(twice).diagnostics.map(i => i.code)).toContain('MARRIAGE_CLAUSE_CONFLICT')
     const noEvidence = { ...m, contract: { ...m.contract!, evidenceId: '' } }
     expect(resolveChildHouseAffiliation(w, f, mo, noEvidence)).toEqual({ status: 'UNRESOLVED', reasonCode: 'MARRIAGE_CONTRACT_EVIDENCE_MISSING' })
     const unknown = { ...w, houses: w.houses.filter(h => h.houseId !== CARDON) }
-    expect(childHouseClauseIssue(unknown, [f, mo], m.contract!.clauses[1] as ChildHouseAffiliationClause)).toBe('CHILD_HOUSE_UNKNOWN')
+    expect(childHouseClauseIssue(unknown, [f, mo], houseClause(w))).toBe('CHILD_HOUSE_UNKNOWN')
+  })
+
+  it('保存・復元後の後続出生も、復元した合意記録で同じ母方家門を用いる', () => {
+    const restore = (w: WorldState) => {
+      const parsed = validateWorldState(JSON.parse(JSON.stringify(w)))
+      expect(parsed.diagnostics).toEqual([])
+      return parsed.world!
+    }
+    const born = done(step(restore(maternalYear().world), [[P2, P5]], TRADE))
+    expect(childOf(born.world, P2, P5).map(p => p.houseId)).toEqual([CARDON])
+    const later = done(step(restore(born.world), [[P2, P5]], TRADE))
+    expect(childOf(later.world, P2, P5).map(p => p.houseId)).toEqual([CARDON, CARDON])
+    expect(claimedSlotGroups(later)).toEqual(['group-east-elite'])
   })
 
   it('片方の同意なし: 例外費用が大きいと母方案は双方同意にならず、父方の既定で成立する', () => {
@@ -259,6 +371,14 @@ describe('DEC-190 不成立・不正な例外', () => {
 
   it('B-002の家門方式と契約の家門係数は一体で選ぶ（片方だけの構成を拒否）', () => {
     const base = { branchStartWorld: createExperimentalWorld(), ledger: [], trustBase: [], autonomy: AUTO }
+    // 出生方式のみ（交渉設定そのものが無い）も拒否する。
+    expect(createAutonomousCalibrationEvaluators({ ...base, childHouseAffiliation: 'DEC190_PATERNAL_PRINCIPLE' }))
+      .toEqual({ ok: false, issues: ['CHILD_HOUSE_MODE_MISMATCH'] })
+    expect(createAutonomousCalibrationEvaluators({ ...base, nextgenMarriage: { book: trial.book, laws: trial.laws,
+      calibration: { ...DYNASTY, childHouse: V4_HOUSE } }, childHouseAffiliation: 'DEC190_PATERNAL_PRINCIPLE' }).ok).toBe(true)
+    // 旧構成（どちらも無し・交渉設定のみ旧版）は従来どおり作れる。
+    expect(createAutonomousCalibrationEvaluators(base).ok).toBe(true)
+    expect(createAutonomousCalibrationEvaluators({ ...base, nextgenMarriage: { book: trial.book, laws: trial.laws, calibration: DYNASTY } }).ok).toBe(true)
     expect(createAutonomousCalibrationEvaluators({ ...base, nextgenMarriage: { book: trial.book, laws: trial.laws,
       calibration: { ...DYNASTY, childHouse: V4_HOUSE } } })).toEqual({ ok: false, issues: ['CHILD_HOUSE_MODE_MISMATCH'] })
     expect(createAutonomousCalibrationEvaluators({ ...base, nextgenMarriage: { book: trial.book, laws: trial.laws, calibration: DYNASTY },
@@ -270,9 +390,12 @@ describe('DEC-190 不成立・不正な例外', () => {
   })
 
   it('reducer: 家門条項のある婚姻の出生は条項の解決結果と一致する家門でのみ登録する', () => {
-    const marriage: Marriage = { marriageId: 'm-25', personIds: [P2, P5], registeredYear: 1250, status: 'ACTIVE',
-      contract: { contractId: 'c-25', evidenceId: 'e-25', clauses: [
-        { clauseId: 'h-25', kind: 'CHILD_HOUSE_AFFILIATION', houseId: CARDON, sourcePersonId: P5 }] } }
+    // reducer境界の単体検査。成功の証明ではなく、記録と結合した契約か否かで出生の可否が分かれることだけを見る。
+    const agreement: ChildHouseAgreementRecord = { registeredYear: 1250, personIds: [P2, P5], sourceTraceId: 't-25',
+      contractKey: 'NO_CLAUSE+CHILD_HOUSE:' + CARDON, firstConsentScore: 20, secondConsentScore: 20, consentThreshold: 15 }
+    const contract = nextgenMarriageContract(1250, [P2, P5], agreement.contractKey, null,
+      { houseId: CARDON, sourcePersonId: P5, agreement }, 't-25')
+    const marriage: Marriage = { marriageId: 'm-25', personIds: [P2, P5], registeredYear: 1250, status: 'ACTIVE', contract }
     const base = newWorld()
     const w: WorldState = { ...base, legal: { ...base.legal, marriages: [marriage] },
       demographics: { cohortSlots: [{ groupId: 'group-east-elite', year: 1250, birthSlots: 1, deathSlots: 0, claimedBirths: 0, claimedDeaths: 0 }] } }
@@ -283,12 +406,29 @@ describe('DEC-190 不成立・不正な例外', () => {
     const good = run(w, outcome('B-002', 3, [birth(child(CARDON))]))
     expect(good.world.persons.find(p => p.personId === 'child-25')?.houseId).toBe(CARDON)
     expect(rejectionCodes(run(w, outcome('B-002', 3, [birth(child('house-ghost'))])))).toContain('NOT_FOUND')
+    const forged: WorldState = { ...w, legal: { ...w.legal, marriages: [{ ...marriage,
+      contract: { ...contract, contractId: 'c-25' } }] } }
+    expect(rejectionCodes(run(forged, outcome('B-002', 3, [birth(child(CARDON))])))).toContain('LEGAL_BASIS_MISSING')
+  })
+
+  it('reducer: 登録時の合意記録と結合しない家門条項の婚姻は登録しない', () => {
+    const y = done(step(createExperimentalWorld(), [[P2, P5]], { ...TRADE_DYNASTY, childHouse: TRADE_HOUSE }))
+    const legit = y.world.legal.marriages[0]!
+    const base = newWorld()
+    const register = (m: Marriage) => run(base, outcome('A-LEG-01', 3, [{ type: 'MARRIAGE_REGISTER', commandId: 'cmd-reg',
+      source: { requestId: 'req-reg', year: 1250, phase: 3, sourceRuleId: 'A-LEG-01', sourceTraceId: 'trace-reg', sourceIntentId: 'intent-reg' },
+      marriage: m }]))
+    expect(register(legit).world.legal.marriages).toHaveLength(1)
+    const clauses = legit.contract!.clauses.map(c => c.kind === 'CHILD_HOUSE_AFFILIATION' ? { ...c, clauseId: 'tampered' } : c)
+    const bad = register({ ...legit, contract: { ...legit.contract!, clauses } })
+    expect(rejectionCodes(bad)).toContain('LEGAL_BASIS_MISSING')
+    expect(bad.world.legal.marriages).toHaveLength(0)
   })
 })
 
 describe('DEC-190 保存・parse・版付き構成', () => {
   it('家門条項はparseで往復し、旧JSONの王朝条項は不変。未知フィールド・王朝IDの混入は拒否', () => {
-    const w = maternalWorld()
+    const w = done(step(createExperimentalWorld(), [[P2, P5]], { ...TRADE_DYNASTY, childHouse: TRADE_HOUSE })).world
     const parsed = validateWorldState(JSON.parse(JSON.stringify(w)))
     expect(parsed.diagnostics).toEqual([])
     expect(parsed.world).toEqual(w)
@@ -298,6 +438,12 @@ describe('DEC-190 保存・parse・版付き構成', () => {
     const missing = JSON.parse(JSON.stringify(w))
     delete missing.legal.marriages[0].contract.clauses[1].sourcePersonId
     expect(validateWorldState(missing).diagnostics.map(i => i.code)).toContain('MISSING_FIELD')
+    const noAgreement = JSON.parse(JSON.stringify(w))
+    delete noAgreement.legal.marriages[0].contract.clauses[1].agreement
+    expect(validateWorldState(noAgreement).diagnostics.map(i => i.code)).toContain('MISSING_FIELD')
+    const extra = JSON.parse(JSON.stringify(w))
+    extra.legal.marriages[0].contract.clauses[1].agreement.signedBy = P5
+    expect(validateWorldState(extra).diagnostics.map(i => i.code)).toContain('UNKNOWN_FIELD')
     const outsider = JSON.parse(JSON.stringify(w))
     outsider.legal.marriages[0].contract.clauses[1].sourcePersonId = P1
     expect(validateWorldState(outsider).diagnostics.map(i => i.code)).toContain('MARRIAGE_CLAUSE_CONFLICT')
@@ -320,11 +466,3 @@ describe('DEC-190 保存・parse・版付き構成', () => {
     expect(new Set([x.multiHouseChildHouseRunConfigDigest(0), x.multiHouseChildHouseRunConfigDigest(1), x.multiHouseAncestralRunConfigDigest(0)]).size).toBe(3)
   })
 })
-
-function maternalWorld(): WorldState {
-  const base = createExperimentalWorld()
-  return { ...base, legal: { ...base.legal, marriages: [{ marriageId: 'm-p', personIds: [P2, P5], registeredYear: 1250, status: 'ACTIVE',
-    contract: { contractId: 'c-p', evidenceId: 'e-p', clauses: [
-      { clauseId: 'd-p', kind: 'CHILD_LEGAL_DYNASTY', dynastyId: NALVEN_DYNASTY_ID },
-      { clauseId: 'h-p', kind: 'CHILD_HOUSE_AFFILIATION', houseId: CARDON, sourcePersonId: P5 }] } }] } }
-}
