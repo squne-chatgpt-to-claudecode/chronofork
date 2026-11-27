@@ -7,7 +7,8 @@ import type {
 import { NEXTGEN_CONTRACT_SELECTION_VERSION } from '../contracts/index.ts'
 import { canonicalize } from '../engine/reducer/canonical.ts'
 import {
-  nextgenContractIdentityKey, nextgenContractIdentityOf, nextgenSelectionContract, sameNextgenChildHouse, sameNextgenContractIdentity,
+  nextgenContractIdentityKey, nextgenContractIdentityOf, nextgenSelectionContract, nextgenSelectionRecordKey,
+  sameNextgenChildHouse, sameNextgenContractIdentity,
 } from './nextgen-contract-ids.ts'
 
 /**
@@ -17,8 +18,11 @@ import {
  * 4: 契約案を構造化同一性（王朝案・家門選択・出典）で識別し、v4の父方案・母方案の双方に条項から独立した
  *    版付き選択記録を保存する。A/Bの照合は同一性・選択肢・得点の完全一致で行い、IDの文字列解析をしない。
  *    旧版（1〜3）の家門条項内の合意記録・連結キーの証跡とは別版。
+ * 5: 契約に選択記録と独立した版付きの正規記録キー（selectionRecordKey）を保存し、選択記録・記録キーの一方だけの
+ *    欠落・改変（父方案の記録削除による旧契約化、合意得点・閾値・年・当事者・同一性・出典の単独改変）を保留・拒否する。
+ *    選択記録版1（記録キーなし）の旧v4契約はparseで版不一致として拒否する。
  */
-export const CHILD_HOUSE_AFFILIATION_VERSION = 'dec190-child-house-affiliation-4'
+export const CHILD_HOUSE_AFFILIATION_VERSION = 'dec190-child-house-affiliation-5'
 
 export type ChildHouseResolution =
   | Readonly<{ status: 'RESOLVED'; houseId: Id; basis: 'PATERNAL_DEFAULT'; clauseId: null }>
@@ -31,11 +35,12 @@ export const childHouseClauses = (contract: MarriageContract | undefined): reado
   contract?.clauses.filter((c): c is ChildHouseAffiliationClause => c.kind === 'CHILD_HOUSE_AFFILIATION') ?? []
 
 /**
- * 子の家門を契約から決める婚姻か（v4の選択記録がある、または家門条項がある）。reducer の出生照合に使う。
- * どちらも無い旧構成の契約・任意IDの契約は、IDを解析せず従来どおり（評価器の判断）とする。
+ * 子の家門を契約から決める婚姻か（v4の選択記録・正規記録キーのいずれかがある、または家門条項がある）。reducer の出生照合に使う。
+ * いずれも無い旧構成の契約・任意IDの契約は、IDを解析せず従来どおり（評価器の判断）とする。
+ * 選択記録と記録キーの両方を同時に消去した契約は旧契約と区別できない（記録間の比較の範囲外）。
  */
 export const childHouseGovernedByContract = (contract: MarriageContract | undefined): boolean =>
-  contract?.selection !== undefined || childHouseClauses(contract).length > 0
+  contract?.selection !== undefined || contract?.selectionRecordKey !== undefined || childHouseClauses(contract).length > 0
 
 /**
  * 当事者の現在の記録に照らした家門条項の適格性。婚姻登録時と出生時に同じ基準で使う。
@@ -80,18 +85,21 @@ export function childHouseContractIssue(
 
 /**
  * 選択記録と契約全体の結合。登録時（A・reducer）と出生時に WorldState だけで同じ照合を行う。
- * 記録の版・形が正しく、当事者・年が婚姻と一致し、双方の得点が閾値以上で、記録から再構成した A の発行契約
+ * 記録の版・形が正しく、選択記録と独立に保存した正規記録キーと一致し、当事者・年が婚姻と一致し、双方の得点が閾値以上で、記録から再構成した A の発行契約
  * （契約ID・証拠ID・全条項・記録）が保存済み契約と完全に一致する場合だけ妥当。
- * 選択記録の無い家門条項、母方案の家門条項の欠落、父方案への後付け、条項・記録の改変、別契約・別ペア・別年の流用は不一致。
+ * 選択記録の無い家門条項・記録キー、記録キーの無い選択記録、母方案の家門条項の欠落、父方案への後付け、条項・記録の改変、別契約・別ペア・別年の流用は不一致。
  */
 export function childHouseAgreementIssue(
   marriage: Pick<Marriage, 'registeredYear' | 'personIds'>, contract: MarriageContract | undefined,
 ): string | null {
   if (!contract) return null
   const clauses = childHouseClauses(contract)
-  const s = contract.selection
-  if (s === undefined) return clauses.length === 0 ? null : 'CHILD_HOUSE_SELECTION_MISSING'
+  const s = contract.selection, recordKey = contract.selectionRecordKey
+  if (s === undefined) return clauses.length === 0 && recordKey === undefined ? null : 'CHILD_HOUSE_SELECTION_MISSING'
   if (s === null || typeof s !== 'object' || s.version !== NEXTGEN_CONTRACT_SELECTION_VERSION) return 'CHILD_HOUSE_SELECTION_VERSION_MISMATCH'
+  // 選択記録と独立に保存した正規記録キーとの内容比較。記録の単独改変・記録キーの単独欠落/改変を、改変後の記録からの再構成で通さない。
+  if (!present(recordKey)) return 'CHILD_HOUSE_SELECTION_RECORD_KEY_MISSING'
+  if (recordKey !== nextgenSelectionRecordKey(s)) return 'CHILD_HOUSE_SELECTION_RECORD_KEY_MISMATCH'
   const identity = nextgenContractIdentityOf(s.identity)
   if (identity === null) return 'CHILD_HOUSE_SELECTION_INVALID'
   const a = s.agreement

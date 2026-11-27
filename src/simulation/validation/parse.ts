@@ -368,8 +368,10 @@ function contractSelection(d: Sink, v: unknown, p: string): NextgenContractSelec
 }
 
 function marriageContract(d: Sink, v: unknown, p: string): MarriageContract {
-  const o = obj(d, v, p, ['contractId', 'evidenceId', 'clauses', 'selection'])
+  const o = obj(d, v, p, ['contractId', 'evidenceId', 'clauses', 'selection', 'selectionRecordKey'])
   const selection = o['selection'] === undefined ? undefined : contractSelection(d, o['selection'], `${p}.selection`)
+  // DEC-190 v4の正規記録キー。形（空でない文字列）だけを読み、選択記録との一致は登録・出生時の共通照合が保留/拒否とする。
+  const selectionRecordKey = optStr(d, o, 'selectionRecordKey', p)
   return {
     contractId: str(d, o, 'contractId', p),
     evidenceId: str(d, o, 'evidenceId', p),
@@ -390,6 +392,7 @@ function marriageContract(d: Sink, v: unknown, p: string): MarriageContract {
       }
     }),
     ...(selection === undefined ? {} : { selection }),
+    ...(selectionRecordKey === undefined ? {} : { selectionRecordKey }),
   }
 }
 

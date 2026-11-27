@@ -15,8 +15,8 @@ import type { EvaluatorMap } from '../../../src/simulation/engine/index.ts'
 import { childHouseAgreementIssue, childHouseClauseIssue, childHouseGovernedByContract, childHouseRegistrationIssue, resolveChildHouseAffiliation }
   from '../../../src/simulation/legal/child-house.ts'
 import {
-  nextgenContractIdentityKey, nextgenContractKey, nextgenMarriageContract, nextgenSelectionContract, parseNextgenContractIdentityKey,
-  sameNextgenContractIdentity,
+  nextgenContractIdentityKey, nextgenContractKey, nextgenMarriageContract, nextgenSelectionContract, nextgenSelectionRecordKey,
+  parseNextgenContractIdentityKey, sameNextgenContractIdentity,
 } from '../../../src/simulation/legal/nextgen-contract-ids.ts'
 import type { ChildHouseContractCalibration, NextgenContractCalibration } from '../../../src/simulation/legal/nextgen-contract.ts'
 import { EXPERIMENTAL_NEXTGEN_CONTRACT, validateNextgenContractCalibration } from '../../../src/simulation/legal/nextgen-contract.ts'
@@ -217,8 +217,14 @@ describe('DEC-190 不成立・不正な例外', () => {
   const selectionOf = (w: WorldState) => w.legal.marriages[0]!.contract!.selection!
   const tamper = (w: WorldState, f: Tamper): WorldState => withContract(w, c => ({ ...c,
     clauses: c.clauses.map(x => x.kind === 'CHILD_HOUSE_AFFILIATION' ? f(x) : x) }))
-  /** 契約の選択記録だけを改変（条項・ID・証拠IDはそのまま）。 */
+  /**
+   * 契約の選択記録を改変し、正規記録キーも改変後の記録から作り直す（条項・ID・証拠IDはそのまま）。
+   * 両独立記録の同時改変でも、記録キーより後段の照合（同意・当事者・条項・契約全体の結合）が落とすことを確認する。
+   */
   const tamperSelection = (w: WorldState, f: (s: NextgenContractSelection) => NextgenContractSelection): WorldState =>
+    withContract(w, c => { const selection = f(c.selection!); return { ...c, selection, selectionRecordKey: nextgenSelectionRecordKey(selection) } })
+  /** 選択記録だけを改変（正規記録キー・条項・ID・証拠IDはそのまま）。 */
+  const tamperSelectionOnly = (w: WorldState, f: (s: NextgenContractSelection) => NextgenContractSelection): WorldState =>
     withContract(w, c => ({ ...c, selection: f(c.selection!) }))
   const tamperAgreement = (w: WorldState, f: (a: ChildHouseAgreementRecord) => ChildHouseAgreementRecord): WorldState =>
     tamperSelection(w, s => ({ ...s, agreement: f(s.agreement) }))
@@ -276,7 +282,11 @@ describe('DEC-190 不成立・不正な例外', () => {
     expect(review(m.contract, [{ ...trace, year: 1251 }])).toBe('CHILD_HOUSE_AGREEMENT_TRACE_MISSING')
     expect(review(m.contract, [{ ...trace, actorRef: { kind: 'PERSON_PAIR', ids: [P4, P5] } }])).toBe('CHILD_HOUSE_AGREEMENT_TRACE_MISSING')
     expect(review(m.contract, [trace], 1251)).toBe('CHILD_HOUSE_AGREEMENT_MARRIAGE_MISMATCH')
-    // 得点の書換えは記録と契約の結合だけでは検出できないため（記録自体から再構成される）、登録時にTraceの選択案と照合する。
+    // 得点の単独書換えは選択記録と独立した正規記録キーとの比較で検出する。
+    const scoreOnly = tamperSelectionOnly(w, s => ({ ...s, agreement: { ...s.agreement, firstConsentScore: s.agreement.firstConsentScore + 1 } }))
+    expect(childHouseAgreementIssue(scoreOnly.legal.marriages[0]!, scoreOnly.legal.marriages[0]!.contract)).toBe('CHILD_HOUSE_SELECTION_RECORD_KEY_MISMATCH')
+    expect(review(scoreOnly.legal.marriages[0]!.contract, [trace])).toBe('CHILD_HOUSE_SELECTION_RECORD_KEY_MISMATCH')
+    // 記録キーも同時に作り直した得点の書換えは記録間の比較の範囲外のため、登録時にTraceの選択案と照合する。
     const scores = tamperAgreement(w, a => ({ ...a, firstConsentScore: a.firstConsentScore + 1 }))
     expect(childHouseAgreementIssue(scores.legal.marriages[0]!, scores.legal.marriages[0]!.contract)).toBeNull()
     expect(review(scores.legal.marriages[0]!.contract, [trace])).toBe('CHILD_HOUSE_AGREEMENT_TRACE_MISMATCH')
@@ -359,7 +369,7 @@ describe('DEC-190 不成立・不正な例外', () => {
     // 契約ID・王朝条項IDを父方案の正規形へ書き換えても、条項から独立した選択記録が母方案を示す。
     ['家門条項の削除と契約ID・王朝条項の父方案への書換え', (w: WorldState) => withContract(withoutHouseClause(w), c => {
       const pat = nextgenSelectionContract({ ...c.selection!, identity: { ...c.selection!.identity, childHouse: PAT() } })
-      return { ...pat, selection: c.selection }
+      return { ...pat, selection: c.selection, selectionRecordKey: c.selectionRecordKey }
     }), 'CHILD_HOUSE_CLAUSE_MISSING'],
   ] as const)('%sは出生を保留し、父方fallback・人物・出生枠消費をしない', (_n, make, code) => {
     expectBirthDeferred(make(maternalYear().world), code)
@@ -733,6 +743,138 @@ describe('DEC-190 不成立・不正な例外', () => {
     expect(register(pat).world.legal.marriages).toHaveLength(1)
     const old = done(step(createExperimentalWorld(), [[P2, P5]], DYNASTY)).world.legal.marriages[0]!
     expect(register(old).world.legal.marriages).toHaveLength(1)
+  })
+
+  describe('選択記録と独立した正規記録キー（selectionRecordKey）', () => {
+    const V4 = { ...DYNASTY, childHouse: V4_HOUSE }
+    const registerIn = (m: Marriage) => run(newWorld(), outcome('A-LEG-01', 3, [{ type: 'MARRIAGE_REGISTER', commandId: 'cmd-reg',
+      source: { requestId: 'req-reg', year: 1250, phase: 3, sourceRuleId: 'A-LEG-01', sourceTraceId: 'trace-reg', sourceIntentId: 'intent-reg' },
+      marriage: m }]))
+    /** 婚姻の登録年（1250）のまま、母の出身集団に出生枠1を置いた世界で出生commandを直接適用する。 */
+    const birthIn = (w: WorldState, houseId: string) => {
+      const slotted: WorldState = { ...w, year: 1250,
+        demographics: { cohortSlots: [{ groupId: 'group-east-elite', year: 1250, birthSlots: 1, deathSlots: 0, claimedBirths: 0, claimedDeaths: 0 }] } }
+      return run(slotted, outcome('B-002', 3, [birth(baby('child-rk', 'group-east-elite', { houseId, fatherId: P2, motherId: P5 }))]))
+    }
+    const expectBirthRejected = (w: WorldState, houseId: string) => {
+      const r = birthIn(w, houseId)
+      expect(rejectionCodes(r)).toContain('LEGAL_BASIS_MISSING')
+      expect(r.world.persons.some(p => p.personId === 'child-rk')).toBe(false)
+      expect(r.world.demographics.cohortSlots[0]!.claimedBirths).toBe(0)
+    }
+    const expectRegisterRejected = (w: WorldState) => {
+      const r = registerIn(w.legal.marriages[0]!)
+      expect(rejectionCodes(r)).toContain('LEGAL_BASIS_MISSING')
+      expect(r.world.legal.marriages).toHaveLength(0)
+    }
+    const dropSelection = (w: WorldState) => withContract(w, ({ selection: _s, ...c }) => { void _s; return c })
+    const dropRecordKey = (w: WorldState) => withContract(w, ({ selectionRecordKey: _k, ...c }) => { void _k; return c })
+
+    it('A-LEG-01が発行する父方案・母方案の契約は、選択記録の正規形と一致する記録キーを持つ（旧構成は持たない）', () => {
+      for (const w of [married(), maternalYear().world]) {
+        const c = w.legal.marriages[0]!.contract!
+        expect(c.selectionRecordKey).toBe(nextgenSelectionRecordKey(c.selection!))
+        expect(c.selectionRecordKey!.startsWith('DEC190_SELECTION_RECORD_1:')).toBe(true)
+        expect(c).toEqual(nextgenSelectionContract(c.selection!))
+      }
+      expect(legacyMarried().legal.marriages[0]!.contract).not.toHaveProperty('selectionRecordKey')
+    })
+
+    it('正常な父方出生（実年次）と、正規v4父方案への母方出生commandの拒否', () => {
+      const w = married()
+      const r = done(step(w, [[P2, P5]], V4))
+      expect(childOf(r.world, P2, P5).map(p => p.houseId)).toEqual([NALVEN])
+      expect(claimedSlotGroups(r)).toEqual(['group-east-elite'])
+      expectBirthRejected(w, CARDON)
+      expect(birthIn(w, NALVEN).world.persons.find(p => p.personId === 'child-rk')?.houseId).toBe(NALVEN)
+    })
+
+    it('v4父方案から選択記録だけを削除: 旧契約とみなさず、登録・出生（実年次・reducer）とも拒否/保留し枠を消費しない', () => {
+      const w = dropSelection(married()), m = w.legal.marriages[0]!
+      expect(m.contract!.clauses.map(c => c.kind)).toEqual(['CHILD_LEGAL_DYNASTY'])
+      expect(validateWorldState(JSON.parse(JSON.stringify(w))).ok).toBe(true)
+      expect(childHouseGovernedByContract(m.contract)).toBe(true)
+      expect(childHouseAgreementIssue(m, m.contract)).toBe('CHILD_HOUSE_SELECTION_MISSING')
+      expect(resolveChildHouseAffiliation(w, ...parties(w), m)).toEqual({ status: 'UNRESOLVED', reasonCode: 'CHILD_HOUSE_SELECTION_MISSING' })
+      expectRegisterRejected(w)
+      for (const h of [CARDON, NALVEN]) expectBirthRejected(w, h)
+      const r = done(step(w, [[P2, P5]], V4))
+      expect(childOf(r.world, P2, P5)).toHaveLength(0)
+      expect(claimedSlotGroups(r)).toEqual([])
+      expect(b002(r)[0]!.reasonCodes).toContain('CHILD_HOUSE_SELECTION_MISSING')
+    })
+
+    it('母方案の正常出生と保存・復元: 記録キーは往復し、復元後も同じ母方家門で出生する', () => {
+      const w = maternalYear().world
+      const parsed = validateWorldState(JSON.parse(JSON.stringify(w)))
+      expect(parsed.diagnostics).toEqual([])
+      expect(parsed.world!.legal.marriages[0]!.contract!.selectionRecordKey).toBe(w.legal.marriages[0]!.contract!.selectionRecordKey)
+      const r = done(step(parsed.world!, [[P2, P5]], TRADE))
+      expect(childOf(r.world, P2, P5).map(p => p.houseId)).toEqual([CARDON])
+      expect(claimedSlotGroups(r)).toEqual(['group-east-elite'])
+      expect(birthIn(w, CARDON).world.persons.find(p => p.personId === 'child-rk')?.houseId).toBe(CARDON)
+    })
+
+    const KEY_MISMATCH = 'CHILD_HOUSE_SELECTION_RECORD_KEY_MISMATCH'
+    it.each([
+      // 閾値以上を保つ合意得点の単独改変（出生結果の差ではなく記録整合性の検出）。
+      ['合意得点（第1当事者, 閾値以上を維持）', (w: WorldState) => tamperSelectionOnly(w, s => ({ ...s,
+        agreement: { ...s.agreement, firstConsentScore: s.agreement.firstConsentScore + 1 } })), KEY_MISMATCH],
+      ['合意得点（第2当事者, 閾値以上を維持）', (w: WorldState) => tamperSelectionOnly(w, s => ({ ...s,
+        agreement: { ...s.agreement, secondConsentScore: s.agreement.secondConsentScore + 1 } })), KEY_MISMATCH],
+      ['閾値', (w: WorldState) => tamperSelectionOnly(w, s => ({ ...s, agreement: { ...s.agreement, consentThreshold: s.agreement.consentThreshold - 1 } })), KEY_MISMATCH],
+      ['登録年', (w: WorldState) => tamperSelectionOnly(w, s => ({ ...s, agreement: { ...s.agreement, registeredYear: 1249 } })), KEY_MISMATCH],
+      ['当事者', (w: WorldState) => tamperSelectionOnly(w, s => ({ ...s, agreement: { ...s.agreement, personIds: [P4, P5] } })), KEY_MISMATCH],
+      ['同一性（王朝案）', (w: WorldState) => tamperSelectionOnly(w, s => ({ ...s, identity: { ...s.identity, dynastyId: null } })), KEY_MISMATCH],
+      ['出典Trace', (w: WorldState) => tamperSelectionOnly(w, s => ({ ...s, agreement: { ...s.agreement, sourceTraceId: 'trace:other' } })), KEY_MISMATCH],
+      ['記録キーの単独欠落', dropRecordKey, 'CHILD_HOUSE_SELECTION_RECORD_KEY_MISSING'],
+      ['記録キーの単独改変', (w: WorldState) => withContract(w, c => ({ ...c, selectionRecordKey: c.selectionRecordKey + 'x' })), KEY_MISMATCH],
+      ['記録キーを別婚姻（父方案）の記録キーへ差替え', (w: WorldState) => withContract(w, c => ({ ...c,
+        selectionRecordKey: married().legal.marriages[0]!.contract!.selectionRecordKey })), KEY_MISMATCH],
+    ] as const)('登録済み母方案の%s: parseは形だけ受理し、登録・出生（実年次・reducer）は保留/拒否して出生0・枠0', (_n, make, code) => {
+      const y = maternalYear(), w = make(y.world), m = w.legal.marriages[0]!
+      expect(childHouseGovernedByContract(m.contract)).toBe(true)
+      expect(childHouseAgreementIssue(m, m.contract)).toBe(code)
+      expect(childHouseRegistrationIssue(w, 1250, [P2, P5], parties(w), m.contract, y.traces)).toBe(code)
+      expectRegisterRejected(w)
+      for (const h of [CARDON, NALVEN]) expectBirthRejected(w, h)
+      expectBirthDeferred(w, code)
+    })
+
+    it('閾値以上の得点改変は対照（無改変）では通り、改変後の記録からの自己再構成では通らない', () => {
+      const w = maternalYear().world, a = selectionOf(w).agreement
+      expect(a.firstConsentScore + 1).toBeGreaterThanOrEqual(a.consentThreshold)
+      const t = tamperSelectionOnly(w, s => ({ ...s, agreement: { ...s.agreement, firstConsentScore: a.firstConsentScore + 1 } }))
+      // 改変後の記録から契約全体を再構成しても、保存済みの独立記録キーとは一致しない。
+      expect(nextgenSelectionContract(selectionOf(t)).selectionRecordKey).not.toBe(t.legal.marriages[0]!.contract!.selectionRecordKey)
+      expect(childHouseAgreementIssue(w.legal.marriages[0]!, w.legal.marriages[0]!.contract)).toBeNull()
+    })
+
+    it('記録キーのみの契約（選択記録なし・家門条項なし）も旧契約とみなさない。旧構成の契約（両方なし）は従来どおり', () => {
+      const w = dropSelection(maternalYear().world)
+      const keyOnly = withContract(w, c => ({ ...c, clauses: c.clauses.filter(x => x.kind !== 'CHILD_HOUSE_AFFILIATION') }))
+      const m = keyOnly.legal.marriages[0]!
+      expect(childHouseGovernedByContract(m.contract)).toBe(true)
+      expect(childHouseAgreementIssue(m, m.contract)).toBe('CHILD_HOUSE_SELECTION_MISSING')
+      expectRegisterRejected(keyOnly)
+      for (const h of [CARDON, NALVEN]) expectBirthRejected(keyOnly, h)
+      const old = legacyMarried()
+      expect(childHouseGovernedByContract(old.legal.marriages[0]!.contract)).toBe(false)
+      expect(registerIn(old.legal.marriages[0]!).world.legal.marriages).toHaveLength(1)
+    })
+
+    it('parse: 記録キーは空でない文字列のみ。記録キーを持たない選択記録版1の旧v4契約は版不一致として拒否する', () => {
+      const w = maternalYear().world
+      for (const v of ['', 1, null]) {
+        const bad = JSON.parse(JSON.stringify(w))
+        bad.legal.marriages[0].contract.selectionRecordKey = v
+        expect(validateWorldState(bad).ok).toBe(false)
+      }
+      const oldV4 = JSON.parse(JSON.stringify(w))
+      oldV4.legal.marriages[0].contract.selection.version = 'dec190-nextgen-contract-selection-1'
+      delete oldV4.legal.marriages[0].contract.selectionRecordKey
+      expect(validateWorldState(oldV4).ok).toBe(false)
+    })
   })
 })
 

@@ -126,8 +126,11 @@ export type NextgenContractChildHouse =
  */
 export type NextgenContractIdentity = Readonly<{ dynastyId: Id | null; childHouse: NextgenContractChildHouse }>
 
-/** v4契約の選択記録の版。旧v4（家門条項内の合意記録・連結キー）とは別版で、同一視しない。 */
-export const NEXTGEN_CONTRACT_SELECTION_VERSION = 'dec190-nextgen-contract-selection-1' as const
+/**
+ * v4契約の選択記録の版。旧v4（家門条項内の合意記録・連結キー、および記録キーを持たない選択記録版1）とは別版で、同一視しない。
+ * 版2から、契約は選択記録と独立した正規記録キー（selectionRecordKey）を併せ持つ。
+ */
+export const NEXTGEN_CONTRACT_SELECTION_VERSION = 'dec190-nextgen-contract-selection-2' as const
 
 /**
  * DEC-190: A-LEG-01 が登録時に B-005 の当年 Trace と照合して確定した双方合意の内容。
@@ -175,6 +178,12 @@ export type MarriageContract = Readonly<{
   clauses: readonly MarriageClause[]
   /** DEC-190 v4構成の契約だけが持つ版付き選択記録。省略は旧構成の契約。 */
   selection?: NextgenContractSelection
+  /**
+   * DEC-190 v4構成の契約だけが持つ、選択記録とは独立した版付きの正規記録キー（登録時の選択記録の正規形）。
+   * 選択記録・記録キーの一方だけの欠落・改変を、記録間の決定的な内容比較で検出する（暗号署名ではない）。
+   * 両方の省略は旧構成の契約。
+   */
+  selectionRecordKey?: string
 }>
 
 export type Marriage = Readonly<{
