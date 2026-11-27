@@ -4,7 +4,7 @@ import type { Person, PersonBirthCommand, PersonDeathCommand, PersonPromotionCom
 import type { Draft, Handler } from './draft.ts'
 import { fail, findPerson } from './draft.ts'
 import type { Rejection } from './types.ts'
-import { childHouseClauses, resolveChildHouseAffiliation } from '../../legal/child-house.ts'
+import { childHouseGovernedByContract, resolveChildHouseAffiliation } from '../../legal/child-house.ts'
 import { countRegisteredSupportingBirths, supportingBirthBucketKey } from '../../population/supporting-marriage.ts'
 
 const slotIndex = (w: WorldState, groupId: string, year: number) =>
@@ -49,11 +49,11 @@ export const personBirth: Handler<PersonBirthCommand> = (d, c) => {
   }
   if (!w.groups.some((g) => g.groupId === c.cohortGroupId)) return fail('NOT_FOUND', `集団 ${c.cohortGroupId} が存在しません`, [c.cohortGroupId])
   if (!w.houses.some((h) => h.houseId === p.houseId)) return fail('NOT_FOUND', `家門 ${p.houseId} が存在しません`, [p.houseId])
-  // DEC-190: 父母の婚姻契約に家門条項がある場合、子の家門は条項の解決結果と一致しなければならない。
+  // DEC-190: 父母の婚姻契約に家門条項がある（または正規の契約IDが条項を示す）場合、子の家門は条項の解決結果と一致しなければならない。
   // 条項の無い旧履歴の出生は従来どおり評価器の判断を適用する（父方/母方を reducer で推定しない）。
   const pair = p.fatherId !== undefined && p.motherId !== undefined ? [p.fatherId, p.motherId].sort() : null
   const marriage = pair && w.legal.marriages.find((m) => m.status === 'ACTIVE' && m.personIds[0] === pair[0] && m.personIds[1] === pair[1])
-  if (marriage && childHouseClauses(marriage.contract).length > 0) {
+  if (marriage && childHouseGovernedByContract(marriage.contract)) {
     const father = findPerson(w, p.fatherId!), mother = findPerson(w, p.motherId!)
     const resolved = father && mother ? resolveChildHouseAffiliation(w, father, mother, marriage) : undefined
     if (resolved?.status !== 'RESOLVED' || resolved.houseId !== p.houseId) {

@@ -10,7 +10,7 @@ import { runYear } from '../../../src/simulation/engine/index.ts'
 import type { EvaluatorMap } from '../../../src/simulation/engine/index.ts'
 import { childHouseAgreementIssue, childHouseClauseIssue, childHouseRegistrationIssue, resolveChildHouseAffiliation }
   from '../../../src/simulation/legal/child-house.ts'
-import { nextgenMarriageContract } from '../../../src/simulation/legal/nextgen-contract-ids.ts'
+import { nextgenContractKey, nextgenDeclaredChildHouseId, nextgenMarriageContract } from '../../../src/simulation/legal/nextgen-contract-ids.ts'
 import type { ChildHouseContractCalibration, NextgenContractCalibration } from '../../../src/simulation/legal/nextgen-contract.ts'
 import { EXPERIMENTAL_NEXTGEN_CONTRACT, validateNextgenContractCalibration } from '../../../src/simulation/legal/nextgen-contract.ts'
 import { reviewDomesticMarriageEligibility } from '../../../src/simulation/legal/nextgen-marriage.ts'
@@ -201,6 +201,8 @@ describe('DEC-190 不成立・不正な例外', () => {
   /** 父方案の登録済み契約へ、元の契約ID・証拠IDのまま母方条項を後付けする。 */
   const appended = (w: WorldState, clause: unknown): WorldState => withContract(w, c => ({ ...c,
     clauses: [...c.clauses, clause as ChildHouseAffiliationClause] }))
+  const withoutHouseClause = (w: WorldState): WorldState => withContract(w, c => ({ ...c,
+    clauses: c.clauses.filter(x => x.kind !== 'CHILD_HOUSE_AFFILIATION') }))
   /** 出生年の実評価: 子・出生Event・出生枠請求がなく、DEFERで理由を記録し、母の家門も変わらない。 */
   const expectBirthDeferred = (w: WorldState, code: string) => {
     expect(validateWorldState(w).ok).toBe(true)
@@ -297,8 +299,64 @@ describe('DEC-190 不成立・不正な例外', () => {
     ['第三者家門', (w: WorldState) => tamper(w, c => ({ ...c, houseId: VARGAS })), 'CHILD_HOUSE_NOT_MATERNAL_HOUSE'],
     ['父方と同じ重複案', (w: WorldState) => tamper(w, c => ({ ...c, houseId: NALVEN })), 'CHILD_HOUSE_NOT_MATERNAL_HOUSE'],
     ['出典が父', (w: WorldState) => tamper(w, c => ({ ...c, sourcePersonId: P2, houseId: NALVEN })), 'CHILD_HOUSE_SOURCE_NOT_MOTHER'],
+    // 母方案の契約ID・証拠ID・王朝条項を残したまま家門条項だけを削除（父方原則へ読み替えない）。
+    ['家門条項だけの削除', (w: WorldState) => withoutHouseClause(w), 'CHILD_HOUSE_CLAUSE_MISSING'],
+    ['家門条項の削除と証拠IDの差替え', (w: WorldState) => withContract(withoutHouseClause(w), c => ({ ...c, evidenceId: 'evidence:other' })),
+      'CHILD_HOUSE_CLAUSE_MISSING'],
+    // 契約IDを父方案の正規形へ書き換えても、残した王朝条項IDが母方案を示す。
+    ['家門条項の削除と契約IDの父方案への書換え', (w: WorldState) => withContract(withoutHouseClause(w), c => ({ ...c,
+      contractId: nextgenMarriageContract(1250, [P2, P5], 'CHILD_DYNASTY:' + NALVEN_DYNASTY_ID, NALVEN_DYNASTY_ID, undefined, 't').contractId })),
+    'CHILD_HOUSE_CLAUSE_MISSING'],
   ] as const)('%sは出生を保留し、父方fallback・人物・出生枠消費をしない', (_n, make, code) => {
     expectBirthDeferred(make(maternalYear().world), code)
+  })
+
+  it('家門条項の単独削除: 王朝条項なしの母方案でも、登録・出生の両評価器が同じ欠落として扱う', () => {
+    // 王朝条項あり（実B005→A-LEG-01で1250成立）: 登録審査・合意結合・解決のすべてが同じ理由で保留する。
+    const y = maternalYear(), w = withoutHouseClause(y.world), m = w.legal.marriages[0]!
+    expect(m.contract!.clauses.map(c => c.kind)).toEqual(['CHILD_LEGAL_DYNASTY'])
+    const [f, mo] = [P2, P5].map(id => w.persons.find(p => p.personId === id)!) as [never, never]
+    expect(childHouseRegistrationIssue(w, 1250, [P2, P5], [f, mo], m.contract, y.traces)).toBe('CHILD_HOUSE_CLAUSE_MISSING')
+    expect(childHouseAgreementIssue(m, m.contract)).toBe('CHILD_HOUSE_CLAUSE_MISSING')
+    expect(resolveChildHouseAffiliation(w, f, mo, m)).toEqual({ status: 'UNRESOLVED', reasonCode: 'CHILD_HOUSE_CLAUSE_MISSING' })
+    // 王朝条項なし（母P3のナルヴェン家門の正規契約）: 契約IDだけが母方案を示す。
+    const cal = { ...DYNASTY, noClauseCost: -20, childHouse: house({ titleWeight: 4 }) }
+    const w1251 = done(step(createExperimentalWorld(), [[P3, P4]], cal)).world
+    const married1251 = done(step(w1251, [[P3, P4]], cal)).world
+    const legit = married1251.legal.marriages[0]!
+    expect(legit.contract!.contractId).toContain('NO_CLAUSE+CHILD_HOUSE:' + NALVEN)
+    const stripped = withContract(married1251, c => ({ ...c, clauses: [] }))
+    expect(validateWorldState(stripped).ok).toBe(true)
+    const r = done(step(stripped, [[P3, P4]], cal))
+    expect(childOf(r.world, P4, P3)).toHaveLength(0)
+    expect(claimedSlotGroups(r)).toEqual([])
+    const t = b002(r).find(x => x.candidates[0]!.inputs.marriageId === legit.marriageId)!
+    expect(t.status).toBe('DEFER')
+    expect(t.reasonCodes).toContain('CHILD_HOUSE_CLAUSE_MISSING')
+    // 対照: 同じ年次で正規の契約は母方家門で出生する。
+    expect(childOf(done(step(married1251, [[P3, P4]], cal)).world, P4, P3).map(p => p.houseId)).toEqual([NALVEN])
+  })
+
+  it('正規IDの読取は生成式で再構成できる場合だけ。旧契約・任意IDの無条項契約は父方原則のまま', () => {
+    const key = nextgenContractKey(NALVEN_DYNASTY_ID, CARDON)
+    const issued = nextgenMarriageContract(1250, [P2, P5], key, NALVEN_DYNASTY_ID, undefined, 't')
+    expect(nextgenDeclaredChildHouseId(issued.contractId, 'contract:nextgen:')).toBe(CARDON)
+    expect(nextgenDeclaredChildHouseId(issued.clauses[0]!.clauseId, 'clause:nextgen:')).toBe(CARDON)
+    const paternal = nextgenMarriageContract(1250, [P2, P5], nextgenContractKey(NALVEN_DYNASTY_ID), NALVEN_DYNASTY_ID, undefined, 't')
+    for (const id of [paternal.contractId, nextgenMarriageContract(1250, [P2, P5], 'NO_CLAUSE', null, undefined, 't').contractId,
+      'contract:legacy+CHILD_HOUSE:' + CARDON, 'c-25', 'contract:nextgen:[1250,["a","b"],"OTHER+CHILD_HOUSE:x"]',
+      'contract:nextgen:[1250, ["a","b"], "NO_CLAUSE+CHILD_HOUSE:x"]', 'contract:nextgen:[1250,["a","b"],"NO_CLAUSE+CHILD_HOUSE:"]',
+      'contract:nextgen:not-json+CHILD_HOUSE:x']) {
+      expect(nextgenDeclaredChildHouseId(id, 'contract:nextgen:')).toBeNull()
+    }
+    // 任意IDに部分文字列を含むだけの無条項契約は誤拒否しない。
+    const w = married()
+    const m = w.legal.marriages[0]!
+    const [f, mo] = [P2, P5].map(id => w.persons.find(p => p.personId === id)!) as [never, never]
+    const loose: Marriage = { ...m, contract: { ...m.contract!, contractId: 'contract:legacy+CHILD_HOUSE:' + CARDON } }
+    expect(resolveChildHouseAffiliation(w, f, mo, loose)).toMatchObject({ status: 'RESOLVED', houseId: NALVEN, basis: 'PATERNAL_DEFAULT' })
+    expect(resolveChildHouseAffiliation(w, f, mo, m)).toMatchObject({ status: 'RESOLVED', houseId: NALVEN, basis: 'PATERNAL_DEFAULT' })
+    expect(childHouseAgreementIssue(m, m.contract)).toBeNull()
   })
 
   it('別ペアの婚姻への合意記録の流用は解決しない', () => {
@@ -409,6 +467,18 @@ describe('DEC-190 不成立・不正な例外', () => {
     const forged: WorldState = { ...w, legal: { ...w.legal, marriages: [{ ...marriage,
       contract: { ...contract, contractId: 'c-25' } }] } }
     expect(rejectionCodes(run(forged, outcome('B-002', 3, [birth(child(CARDON))])))).toContain('LEGAL_BASIS_MISSING')
+    // 母方案の正規契約IDのまま家門条項だけを削除した婚姻: 父方・母方いずれの家門でも出生・枠請求をしない。
+    const stripped: WorldState = { ...w, legal: { ...w.legal, marriages: [{ ...marriage, contract: { ...contract, clauses: [] } }] } }
+    for (const h of [NALVEN, CARDON]) {
+      const r = run(stripped, outcome('B-002', 3, [birth(child(h))]))
+      expect(rejectionCodes(r)).toContain('LEGAL_BASIS_MISSING')
+      expect(r.world.persons.some(p => p.personId === 'child-25')).toBe(false)
+      expect(r.world.demographics.cohortSlots[0]!.claimedBirths).toBe(0)
+    }
+    // 真の無条項（父方案の正規契約）は従来どおり登録できる。
+    const plain = nextgenMarriageContract(1250, [P2, P5], 'NO_CLAUSE', null, undefined, 't-25')
+    const paternal: WorldState = { ...w, legal: { ...w.legal, marriages: [{ ...marriage, contract: plain }] } }
+    expect(run(paternal, outcome('B-002', 3, [birth(child(NALVEN))])).world.persons.find(p => p.personId === 'child-25')?.houseId).toBe(NALVEN)
   })
 
   it('reducer: 登録時の合意記録と結合しない家門条項の婚姻は登録しない', () => {
@@ -423,6 +493,9 @@ describe('DEC-190 不成立・不正な例外', () => {
     const bad = register({ ...legit, contract: { ...legit.contract!, clauses } })
     expect(rejectionCodes(bad)).toContain('LEGAL_BASIS_MISSING')
     expect(bad.world.legal.marriages).toHaveLength(0)
+    const stripped = register({ ...legit, contract: { ...legit.contract!, clauses: legit.contract!.clauses.filter(c => c.kind !== 'CHILD_HOUSE_AFFILIATION') } })
+    expect(rejectionCodes(stripped)).toContain('LEGAL_BASIS_MISSING')
+    expect(stripped.world.legal.marriages).toHaveLength(0)
   })
 })
 

@@ -5,10 +5,13 @@ import type {
   ChildHouseAffiliationClause, DecisionTrace, Id, Marriage, MarriageContract, Person, WorldState, Year,
 } from '../contracts/index.ts'
 import { canonicalize } from '../engine/reducer/canonical.ts'
-import { nextgenContractKey, nextgenMarriageContract } from './nextgen-contract-ids.ts'
+import { nextgenContractKey, nextgenDeclaredChildHouseId, nextgenMarriageContract } from './nextgen-contract-ids.ts'
 
-/** 1: 母方家門条項に登録時の双方合意の記録を保存し、出生時に契約全体との結合を照合する。 */
-export const CHILD_HOUSE_AFFILIATION_VERSION = 'dec190-child-house-affiliation-1'
+/**
+ * 1: 母方家門条項に登録時の双方合意の記録を保存し、出生時に契約全体との結合を照合する。
+ * 2: 正規の契約ID・王朝条項IDが母方案を示すのに家門条項が無い契約を父方原則とせず保留する。
+ */
+export const CHILD_HOUSE_AFFILIATION_VERSION = 'dec190-child-house-affiliation-2'
 
 export type ChildHouseResolution =
   | Readonly<{ status: 'RESOLVED'; houseId: Id; basis: 'PATERNAL_DEFAULT'; clauseId: null }>
@@ -19,6 +22,24 @@ const present = (v: unknown): v is string => typeof v === 'string' && v.length >
 
 export const childHouseClauses = (contract: MarriageContract | undefined): readonly ChildHouseAffiliationClause[] =>
   contract?.clauses.filter((c): c is ChildHouseAffiliationClause => c.kind === 'CHILD_HOUSE_AFFILIATION') ?? []
+
+/**
+ * 家門条項が0件でも、Aが発行した正規の契約ID・王朝条項IDが母方案を示す場合は条項の欠落（記録間の矛盾）。
+ * 生成式で再構成できるIDだけを読むため、旧契約・任意IDの無条項契約は従来どおり父方原則。
+ */
+export function childHouseClauseMissingIssue(contract: MarriageContract | undefined): string | null {
+  if (!contract || childHouseClauses(contract).length > 0) return null
+  const declared = [
+    present(contract.contractId) ? nextgenDeclaredChildHouseId(contract.contractId, 'contract:nextgen:') : null,
+    ...contract.clauses.map((c) => c.kind === 'CHILD_LEGAL_DYNASTY' && present(c.clauseId)
+      ? nextgenDeclaredChildHouseId(c.clauseId, 'clause:nextgen:') : null),
+  ]
+  return declared.some((h) => h !== null) ? 'CHILD_HOUSE_CLAUSE_MISSING' : null
+}
+
+/** 子の家門を契約から決める婚姻か（家門条項がある、または正規IDが条項を示す）。reducer の出生照合に使う。 */
+export const childHouseGovernedByContract = (contract: MarriageContract | undefined): boolean =>
+  childHouseClauses(contract).length > 0 || childHouseClauseMissingIssue(contract) !== null
 
 /**
  * 当事者の現在の記録に照らした家門条項の適格性。婚姻登録時と出生時に同じ基準で使う。
@@ -42,12 +63,12 @@ export function childHouseClauseIssue(
   return null
 }
 
-/** 契約全体の家門条項の検証。0件は父方原則のため妥当、2件以上は優先順位を自動決定せず不適格。 */
+/** 契約全体の家門条項の検証。0件は父方原則のため妥当（正規IDが条項を示す欠落を除く）、2件以上は優先順位を自動決定せず不適格。 */
 export function childHouseContractIssue(
   world: WorldState, parties: readonly [Person, Person], contract: MarriageContract | undefined,
 ): string | null {
   const clauses = childHouseClauses(contract)
-  if (clauses.length === 0) return null
+  if (clauses.length === 0) return childHouseClauseMissingIssue(contract)
   if (clauses.length > 1) return 'AMBIGUOUS_CHILD_HOUSE_CLAUSES'
   return childHouseClauseIssue(world, parties, clauses[0]!)
 }
@@ -62,7 +83,7 @@ export function childHouseAgreementIssue(
   marriage: Pick<Marriage, 'registeredYear' | 'personIds'>, contract: MarriageContract | undefined,
 ): string | null {
   const clauses = childHouseClauses(contract)
-  if (clauses.length === 0) return null
+  if (clauses.length === 0) return childHouseClauseMissingIssue(contract)
   if (clauses.length > 1) return 'AMBIGUOUS_CHILD_HOUSE_CLAUSES'
   const clause = clauses[0]!, a = clause.agreement
   if (a === null || typeof a !== 'object') return 'CHILD_HOUSE_AGREEMENT_MISSING'
@@ -91,7 +112,7 @@ export function childHouseRegistrationIssue(
   contract: MarriageContract | undefined, priorTraces: readonly DecisionTrace[],
 ): string | null {
   const clauses = childHouseClauses(contract)
-  if (clauses.length === 0) return null
+  if (clauses.length === 0) return childHouseClauseMissingIssue(contract)
   const issue = childHouseContractIssue(world, parties, contract) ?? childHouseAgreementIssue({ registeredYear: year, personIds: pair }, contract)
   if (issue) return issue
   const clause = clauses[0]!, a = clause.agreement
@@ -118,7 +139,7 @@ export function childHouseRegistrationIssue(
 
 /**
  * 登録済みで有効な父母の婚姻から出生児の家門を決める。呼出側が当年の婚姻（ACTIVE・登録年）を確認済みであること。
- * 無条項は父の実在家門。条項は登録時の双方合意の記録と契約全体が結合していることを要し、不足・不正はUNRESOLVED。
+ * 無条項は父の実在家門（正規IDが母方案を示す条項欠落は保留）。条項は登録時の双方合意の記録と契約全体が結合していることを要し、不足・不正はUNRESOLVED。
  */
 export function resolveChildHouseAffiliation(
   world: WorldState, father: Person, mother: Person, marriage: Marriage,
@@ -129,6 +150,8 @@ export function resolveChildHouseAffiliation(
   }
   const clauses = childHouseClauses(marriage.contract)
   if (clauses.length === 0) {
+    const missing = childHouseClauseMissingIssue(marriage.contract)
+    if (missing) return { status: 'UNRESOLVED', reasonCode: missing }
     return world.houses.some((h) => h.houseId === father.houseId)
       ? { status: 'RESOLVED', houseId: father.houseId, basis: 'PATERNAL_DEFAULT', clauseId: null }
       : { status: 'UNRESOLVED', reasonCode: 'PATERNAL_HOUSE_UNKNOWN' }
