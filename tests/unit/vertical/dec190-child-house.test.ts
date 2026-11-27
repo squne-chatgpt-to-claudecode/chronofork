@@ -8,7 +8,7 @@ import type { AutonomyCalibration } from '../../../src/simulation/autonomy/index
 import type { ChildHouseAffiliationClause, ChildHouseAgreementRecord, Marriage, MarriageContract, WorldState } from '../../../src/simulation/contracts/index.ts'
 import { runYear } from '../../../src/simulation/engine/index.ts'
 import type { EvaluatorMap } from '../../../src/simulation/engine/index.ts'
-import { childHouseAgreementIssue, childHouseClauseIssue, childHouseRegistrationIssue, resolveChildHouseAffiliation }
+import { childHouseAgreementIssue, childHouseClauseIssue, childHouseClauseMissingIssue, childHouseRegistrationIssue, resolveChildHouseAffiliation }
   from '../../../src/simulation/legal/child-house.ts'
 import { nextgenContractKey, nextgenDeclaredChildHouseId, nextgenMarriageContract } from '../../../src/simulation/legal/nextgen-contract-ids.ts'
 import type { ChildHouseContractCalibration, NextgenContractCalibration } from '../../../src/simulation/legal/nextgen-contract.ts'
@@ -337,18 +337,41 @@ describe('DEC-190 不成立・不正な例外', () => {
     expect(childOf(done(step(married1251, [[P3, P4]], cal)).world, P4, P3).map(p => p.houseId)).toEqual([NALVEN])
   })
 
-  it('正規IDの読取は生成式で再構成できる場合だけ。旧契約・任意IDの無条項契約は父方原則のまま', () => {
+  it('正規IDの読取は生成式で再構成でき、現存する王朝条項の実dynastyIdの母方案と一致する場合だけ。旧契約・任意IDは父方原則のまま', () => {
     const key = nextgenContractKey(NALVEN_DYNASTY_ID, CARDON)
     const issued = nextgenMarriageContract(1250, [P2, P5], key, NALVEN_DYNASTY_ID, undefined, 't')
-    expect(nextgenDeclaredChildHouseId(issued.contractId, 'contract:nextgen:')).toBe(CARDON)
-    expect(nextgenDeclaredChildHouseId(issued.clauses[0]!.clauseId, 'clause:nextgen:')).toBe(CARDON)
+    expect(nextgenDeclaredChildHouseId(issued.contractId, 'contract:nextgen:', NALVEN_DYNASTY_ID)).toBe(CARDON)
+    expect(nextgenDeclaredChildHouseId(issued.clauses[0]!.clauseId, 'clause:nextgen:', NALVEN_DYNASTY_ID)).toBe(CARDON)
+    // 別の王朝案・王朝条項なしを前提にすると読まない（王朝IDを区切りで推測しない）。
+    expect(nextgenDeclaredChildHouseId(issued.contractId, 'contract:nextgen:', null)).toBeNull()
+    expect(nextgenDeclaredChildHouseId(issued.contractId, 'contract:nextgen:', 'dynasty-nal')).toBeNull()
+    const noClause = nextgenMarriageContract(1250, [P2, P5], nextgenContractKey(null, CARDON), null, undefined, 't')
+    expect(nextgenDeclaredChildHouseId(noClause.contractId, 'contract:nextgen:', null)).toBe(CARDON)
     const paternal = nextgenMarriageContract(1250, [P2, P5], nextgenContractKey(NALVEN_DYNASTY_ID), NALVEN_DYNASTY_ID, undefined, 't')
-    for (const id of [paternal.contractId, nextgenMarriageContract(1250, [P2, P5], 'NO_CLAUSE', null, undefined, 't').contractId,
-      'contract:legacy+CHILD_HOUSE:' + CARDON, 'c-25', 'contract:nextgen:[1250,["a","b"],"OTHER+CHILD_HOUSE:x"]',
-      'contract:nextgen:[1250, ["a","b"], "NO_CLAUSE+CHILD_HOUSE:x"]', 'contract:nextgen:[1250,["a","b"],"NO_CLAUSE+CHILD_HOUSE:"]',
-      'contract:nextgen:not-json+CHILD_HOUSE:x']) {
-      expect(nextgenDeclaredChildHouseId(id, 'contract:nextgen:')).toBeNull()
+    for (const [id, d] of [[paternal.contractId, NALVEN_DYNASTY_ID], [paternal.clauses[0]!.clauseId, NALVEN_DYNASTY_ID],
+      [nextgenMarriageContract(1250, [P2, P5], 'NO_CLAUSE', null, undefined, 't').contractId, null],
+      ['contract:legacy+CHILD_HOUSE:' + CARDON, null], ['c-25', null], ['contract:nextgen:[1250,["a","b"],"OTHER+CHILD_HOUSE:x"]', null],
+      ['contract:nextgen:[1250, ["a","b"], "NO_CLAUSE+CHILD_HOUSE:x"]', null], ['contract:nextgen:[1250,["a","b"],"NO_CLAUSE+CHILD_HOUSE:"]', null],
+      ['contract:nextgen:not-json+CHILD_HOUSE:x', null], [issued.contractId, '']] as const) {
+      const prefix = id.startsWith('clause:') ? 'clause:nextgen:' : 'contract:nextgen:'
+      expect(nextgenDeclaredChildHouseId(id, prefix, d)).toBeNull()
     }
+    // 王朝ID自体が区切り（複数を含む）を含む: 父方案は家門なし、母方案は実王朝IDの後の家門だけを読む。
+    for (const d of ['dynasty-nalven+CHILD_HOUSE:house-cardon', 'a+CHILD_HOUSE:b+CHILD_HOUSE:c', '+CHILD_HOUSE:x']) {
+      const pat = nextgenMarriageContract(1250, [P2, P5], nextgenContractKey(d), d, undefined, 't')
+      expect(nextgenDeclaredChildHouseId(pat.contractId, 'contract:nextgen:', d)).toBeNull()
+      expect(nextgenDeclaredChildHouseId(pat.clauses[0]!.clauseId, 'clause:nextgen:', d)).toBeNull()
+      expect(childHouseClauseMissingIssue(pat)).toBeNull()
+      const mat = nextgenMarriageContract(1250, [P2, P5], nextgenContractKey(d, CARDON), d, undefined, 't')
+      expect(nextgenDeclaredChildHouseId(mat.contractId, 'contract:nextgen:', d)).toBe(CARDON)
+      expect(childHouseClauseMissingIssue(mat)).toBe('CHILD_HOUSE_CLAUSE_MISSING')
+      // 契約IDだけ父方案へ書き換えても、残存王朝条項IDが母方案を示す。
+      expect(childHouseClauseMissingIssue({ ...mat, contractId: pat.contractId })).toBe('CHILD_HOUSE_CLAUSE_MISSING')
+    }
+    // 王朝条項が無いのに王朝案キーを持つ正規契約IDは、現存条項から再構成できず母方案を除外できない。
+    expect(childHouseClauseMissingIssue({ ...issued, clauses: [] })).toBe('CHILD_HOUSE_CLAUSE_MISSING')
+    expect(childHouseClauseMissingIssue({ ...paternal, clauses: [] })).toBeNull()
+    expect(childHouseClauseMissingIssue({ contractId: 'c-25', evidenceId: 'e', clauses: [] })).toBeNull()
     // 任意IDに部分文字列を含むだけの無条項契約は誤拒否しない。
     const w = married()
     const m = w.legal.marriages[0]!
@@ -357,6 +380,67 @@ describe('DEC-190 不成立・不正な例外', () => {
     expect(resolveChildHouseAffiliation(w, f, mo, loose)).toMatchObject({ status: 'RESOLVED', houseId: NALVEN, basis: 'PATERNAL_DEFAULT' })
     expect(resolveChildHouseAffiliation(w, f, mo, m)).toMatchObject({ status: 'RESOLVED', houseId: NALVEN, basis: 'PATERNAL_DEFAULT' })
     expect(childHouseAgreementIssue(m, m.contract)).toBeNull()
+  })
+
+  describe('王朝ID自体が +CHILD_HOUSE: を含む世界（既存契約は任意の非空ID）', () => {
+    const MARKED = NALVEN_DYNASTY_ID + '+CHILD_HOUSE:' + CARDON
+    const rename = <T,>(v: T): T => (typeof v === 'string' ? (v === NALVEN_DYNASTY_ID ? MARKED : v)
+      : Array.isArray(v) ? v.map(rename) : v !== null && typeof v === 'object'
+        ? Object.fromEntries(Object.entries(v).map(([k, a]) => [rename(k), rename(a)])) : v) as T
+    const markedWorld = () => rename(createExperimentalWorld())
+    const markedEvaluators = (w: WorldState, cal: NextgenContractCalibration, pair: readonly [string, string] = [P2, P5]) => {
+      const r = createAutonomousCalibrationEvaluators({
+        branchStartWorld: w, ledger: [], trustBase: [{ personIds: pair, value: 40 }],
+        nextgenMarriage: { book: rename(trial.book), laws: rename(trial.laws), calibration: cal }, autonomy: AUTO,
+        ...(cal.childHouse ? { childHouseAffiliation: 'DEC190_PATERNAL_PRINCIPLE' as const } : {}),
+      })
+      if (!r.ok) throw new Error(r.issues.join('; '))
+      return r.evaluators
+    }
+    const markedStep = (w: WorldState, cal: NextgenContractCalibration) => done(step(w, [[P2, P5]], cal, markedEvaluators(w, cal)))
+    const aLeg = (r: ReturnType<typeof done>) => r.traces.filter(t => t.ruleId === 'A-LEG-01')
+
+    it.each([
+      ['旧nextgen（家門条項方式なし）', DYNASTY, CARDON],
+      ['v4家門方式の父方案', { ...DYNASTY, childHouse: V4_HOUSE }, NALVEN],
+    ] as const)('%s: 王朝条項のある正規の旧契約を母方案と誤認せず、実年次で登録・出生する', (_n, cal, childHouseId) => {
+      const start = markedWorld()
+      expect(validateWorldState(start).ok).toBe(true)
+      const y = markedStep(start, cal)
+      expect(b005(y).status).toBe('ACCEPT')
+      expect(b005(y).candidates[0]!.inputs.selectedContractKey).toBe('CHILD_DYNASTY:' + MARKED)
+      expect(aLeg(y).map(t => t.status)).toEqual(['ACCEPT'])
+      const [m] = y.world.legal.marriages
+      expect(m!.contract!.clauses).toEqual([expect.objectContaining({ kind: 'CHILD_LEGAL_DYNASTY', dynastyId: MARKED })])
+      expect(m!.contract!.contractId).toBe(nextgenMarriageContract(1250, [P2, P5], 'CHILD_DYNASTY:' + MARKED, MARKED, undefined, 't').contractId)
+      expect(childHouseClauseMissingIssue(m!.contract)).toBeNull()
+      const b = markedStep(y.world, cal)
+      expect(childOf(b.world, P2, P5)).toEqual([expect.objectContaining({ houseId: childHouseId,
+        legalDynasty: { status: 'DETERMINED', dynastyId: MARKED } })])
+      expect(claimedSlotGroups(b)).toEqual(['group-east-elite'])
+      expect(validateWorldState(b.world).ok).toBe(true)
+    })
+
+    it('同じ王朝IDの母方案は実年次で成立し、家門条項の単独削除は保留して出生・枠消費をしない', () => {
+      const y = markedStep(markedWorld(), TRADE)
+      const m = y.world.legal.marriages[0]!
+      expect(b005(y).candidates[0]!.inputs.selectedContractKey).toBe(nextgenContractKey(MARKED, CARDON))
+      expect(m.contract!.clauses.map(c => c.kind)).toEqual(['CHILD_LEGAL_DYNASTY', 'CHILD_HOUSE_AFFILIATION'])
+      // 対照: 正規の母方案は母方家門で出生。
+      expect(childOf(markedStep(y.world, TRADE).world, P2, P5).map(p => p.houseId)).toEqual([CARDON])
+      const stripped = withoutHouseClause(y.world)
+      expect(validateWorldState(stripped).ok).toBe(true)
+      const sm = stripped.legal.marriages[0]!
+      const [f, mo] = [P2, P5].map(id => stripped.persons.find(p => p.personId === id)!) as [never, never]
+      expect(childHouseRegistrationIssue(stripped, 1250, [P2, P5], [f, mo], sm.contract, y.traces)).toBe('CHILD_HOUSE_CLAUSE_MISSING')
+      expect(childHouseAgreementIssue(sm, sm.contract)).toBe('CHILD_HOUSE_CLAUSE_MISSING')
+      const r = markedStep(stripped, TRADE)
+      expect(childOf(r.world, P2, P5)).toHaveLength(0)
+      expect(claimedSlotGroups(r)).toEqual([])
+      const t = b002(r)[0]!
+      expect(t.status).toBe('DEFER')
+      expect(t.reasonCodes).toContain('CHILD_HOUSE_CLAUSE_MISSING')
+    })
   })
 
   it('別ペアの婚姻への合意記録の流用は解決しない', () => {

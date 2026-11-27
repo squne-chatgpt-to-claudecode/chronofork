@@ -5,13 +5,16 @@ import type {
   ChildHouseAffiliationClause, DecisionTrace, Id, Marriage, MarriageContract, Person, WorldState, Year,
 } from '../contracts/index.ts'
 import { canonicalize } from '../engine/reducer/canonical.ts'
-import { nextgenContractKey, nextgenDeclaredChildHouseId, nextgenMarriageContract } from './nextgen-contract-ids.ts'
+import {
+  nextgenContractKey, nextgenDeclaredChildHouseId, nextgenMarriageContract, nextgenUnanchoredDynastyHouseKey,
+} from './nextgen-contract-ids.ts'
 
 /**
  * 1: 母方家門条項に登録時の双方合意の記録を保存し、出生時に契約全体との結合を照合する。
  * 2: 正規の契約ID・王朝条項IDが母方案を示すのに家門条項が無い契約を父方原則とせず保留する。
+ * 3: 正規IDの母方案判定を現存する王朝条項の実dynastyIdに結び付け、王朝ID自体が区切りを含む旧契約を誤認しない。
  */
-export const CHILD_HOUSE_AFFILIATION_VERSION = 'dec190-child-house-affiliation-2'
+export const CHILD_HOUSE_AFFILIATION_VERSION = 'dec190-child-house-affiliation-3'
 
 export type ChildHouseResolution =
   | Readonly<{ status: 'RESOLVED'; houseId: Id; basis: 'PATERNAL_DEFAULT'; clauseId: null }>
@@ -25,16 +28,20 @@ export const childHouseClauses = (contract: MarriageContract | undefined): reado
 
 /**
  * 家門条項が0件でも、Aが発行した正規の契約ID・王朝条項IDが母方案を示す場合は条項の欠落（記録間の矛盾）。
- * 生成式で再構成できるIDだけを読むため、旧契約・任意IDの無条項契約は従来どおり父方原則。
+ * 生成式で再構成できるIDだけを、契約に現存する王朝条項の実dynastyId（または王朝条項なし）を前提に読む。
+ * 王朝ID自体が区切り文字を含む旧契約・任意IDの無条項契約は従来どおり父方原則。
  */
 export function childHouseClauseMissingIssue(contract: MarriageContract | undefined): string | null {
   if (!contract || childHouseClauses(contract).length > 0) return null
-  const declared = [
-    present(contract.contractId) ? nextgenDeclaredChildHouseId(contract.contractId, 'contract:nextgen:') : null,
-    ...contract.clauses.map((c) => c.kind === 'CHILD_LEGAL_DYNASTY' && present(c.clauseId)
-      ? nextgenDeclaredChildHouseId(c.clauseId, 'clause:nextgen:') : null),
-  ]
-  return declared.some((h) => h !== null) ? 'CHILD_HOUSE_CLAUSE_MISSING' : null
+  const dynastyClauses = contract.clauses.filter((c) => c.kind === 'CHILD_LEGAL_DYNASTY')
+  const anchors: (Id | null)[] = [null, ...dynastyClauses.map((c) => c.dynastyId).filter(present)]
+  const contractId = present(contract.contractId) ? contract.contractId : null
+  const declared =
+    (contractId !== null && (anchors.some((d) => nextgenDeclaredChildHouseId(contractId, 'contract:nextgen:', d) !== null) ||
+      (dynastyClauses.length === 0 && nextgenUnanchoredDynastyHouseKey(contractId)))) ||
+    dynastyClauses.some((c) => present(c.clauseId) && present(c.dynastyId) &&
+      nextgenDeclaredChildHouseId(c.clauseId, 'clause:nextgen:', c.dynastyId) !== null)
+  return declared ? 'CHILD_HOUSE_CLAUSE_MISSING' : null
 }
 
 /** 子の家門を契約から決める婚姻か（家門条項がある、または正規IDが条項を示す）。reducer の出生照合に使う。 */
