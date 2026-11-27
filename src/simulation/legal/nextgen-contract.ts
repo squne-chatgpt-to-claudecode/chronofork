@@ -1,16 +1,18 @@
 // DEC-058: 家門契約案を当年の実人物・王朝・所領・家門支持から評価。
 // 校正用効用係数は暫定。父系デフォルト、勝利対象王朝への優遇、同率のID順解消は禁止。
-import type { Id, MarriageContract, Person, WorldState } from '../contracts/index.ts'
+import type { Id, MarriageContract, NextgenContractChildHouse, NextgenContractIdentity, Person, WorldState } from '../contracts/index.ts'
+import { NEXTGEN_CONTRACT_SELECTION_VERSION } from '../contracts/index.ts'
 import { marriageCandidatePersons } from './nextgen-marriage.ts'
 import { childHouseClauseIssue } from './child-house.ts'
-import { nextgenContractKey, nextgenMarriageContract } from './nextgen-contract-ids.ts'
+import {
+  nextgenContractIdentityKey, nextgenContractKey, nextgenMarriageContract, nextgenSelectionContract,
+} from './nextgen-contract-ids.ts'
 
 /** DEC-190: 契約案の子の家門。PATERNAL_DEFAULTは無条項、MATERNALは母の家門を指定する明示条項。 */
-export type ContractChildHouse =
-  | Readonly<{basis:'PATERNAL_DEFAULT';houseId:Id}>
-  | Readonly<{basis:'MATERNAL_CONTRACT_CLAUSE';houseId:Id;sourcePersonId:Id}>
+export type ContractChildHouse = NextgenContractChildHouse
 
 export type ContractChoice=Readonly<{
+  /** 旧構成は NO_CLAUSE / CHILD_DYNASTY:<id>、DEC-190構成は構造化同一性の正規キー（nextgenContractIdentityKey）。 */
   key:string
   dynastyId:Id|null
   firstConsentScore:number
@@ -20,6 +22,9 @@ export type ContractChoice=Readonly<{
   /** DEC-190構成だけが持つ。旧構成の選択肢・記録は変更しない。 */
   childHouse?:ContractChildHouse
 }>
+/** DEC-190構成の選択肢の構造化同一性。旧構成の選択肢はnull。 */
+export const contractChoiceIdentity=(c:Pick<ContractChoice,'dynastyId'|'childHouse'>):NextgenContractIdentity|null=>
+  c.childHouse===undefined?null:{dynastyId:c.dynastyId,childHouse:c.childHouse}
 export type ContractAgreement=
   | Readonly<{status:'ACCEPT';reasonCode:'BOTH_PARTIES_ACCEPT_UNIQUE_CONTRACT';choice:ContractChoice;choices:readonly ContractChoice[]}>
   | Readonly<{status:'DEFER';reasonCode:string;choices:readonly ContractChoice[]}>
@@ -161,11 +166,12 @@ export function chooseNextgenContract(
       houseId:maternal.houseId,sourcePersonId:mother.personId})===null
     const delta=people.map(p=>childHouseScore(world,p,maternal.houseId,houseCal)-
       childHouseScore(world,p,paternal.houseId,houseCal)-houseCal.exceptionCost)
+    // 父方案・母方案とも、王朝案と家門選択の構造から正規キーを作る（旧キーとの連結で案を表さない）。
     choices=[
-      ...legacy.map(c=>({...c,childHouse:paternal})),
+      ...legacy.map(c=>({...c,key:nextgenContractIdentityKey({dynastyId:c.dynastyId,childHouse:paternal}),childHouse:paternal})),
       ...(maternalValid?legacy.map(c=>{
         const firstConsentScore=c.firstConsentScore+delta[0]!,secondConsentScore=c.secondConsentScore+delta[1]!
-        return {...c,key:nextgenContractKey(c.dynastyId,maternal.houseId),firstConsentScore,secondConsentScore,
+        return {...c,key:nextgenContractIdentityKey({dynastyId:c.dynastyId,childHouse:maternal}),firstConsentScore,secondConsentScore,
           mutuallyAccepted:firstConsentScore>=calibration.consentThreshold&&secondConsentScore>=calibration.consentThreshold,
           minimumUtility:Math.min(firstConsentScore,secondConsentScore),childHouse:maternal}
       }):[]),
@@ -181,17 +187,17 @@ export function chooseNextgenContract(
 
 /** B-005がその年に合意した選択肢をAが登録するための安定した証拠。
  * B-005 Trace とA-LEG-01の再評価が一致しなければ、証拠IDだけでは登録不可。
- * DEC-190: 母方家門条項には、Aが確認した双方合意（当事者・年・Trace・案・得点・閾値）を条項内に保存する。
+ * 旧構成は従来の契約。DEC-190構成は父方案・母方案とも、選んだ案の構造化同一性と双方合意
+ * （当事者・年・Trace・双方の得点・閾値）を条項から独立した版付き選択記録として契約に保存する。
  */
 export function negotiatedMarriageContract(
   year:number,pair:readonly [Id,Id],choice:ContractChoice,sourceTraceId:Id,consentThreshold?:number,
 ):MarriageContract{
-  const house=choice.childHouse
-  if(house?.basis!=='MATERNAL_CONTRACT_CLAUSE')
-    return nextgenMarriageContract(year,pair,choice.key,choice.dynastyId,undefined,sourceTraceId)
+  const identity=contractChoiceIdentity(choice)
+  if(identity===null)return nextgenMarriageContract(year,pair,choice.key,choice.dynastyId,sourceTraceId)
   if(consentThreshold===undefined||!choice.mutuallyAccepted)throw new RangeError('CHILD_HOUSE_AGREEMENT_CONSENT_MISSING')
-  return nextgenMarriageContract(year,pair,choice.key,choice.dynastyId,{houseId:house.houseId,sourcePersonId:house.sourcePersonId,
-    agreement:{registeredYear:year,personIds:pair,sourceTraceId,contractKey:choice.key,
-      ...(choice.dynastyId===null?{}:{dynastyId:choice.dynastyId}),
-      firstConsentScore:choice.firstConsentScore,secondConsentScore:choice.secondConsentScore,consentThreshold}},sourceTraceId)
+  if(choice.key!==nextgenContractIdentityKey(identity))throw new RangeError('NEXTGEN_CONTRACT_IDENTITY_KEY_MISMATCH')
+  return nextgenSelectionContract({version:NEXTGEN_CONTRACT_SELECTION_VERSION,identity,
+    agreement:{registeredYear:year,personIds:pair,sourceTraceId,
+      firstConsentScore:choice.firstConsentScore,secondConsentScore:choice.secondConsentScore,consentThreshold}})
 }

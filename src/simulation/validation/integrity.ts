@@ -344,6 +344,21 @@ export function checkWorldIntegrity(world: WorldState, yearStart = false): Diagn
       if (houseClauses.length > 1) {
         add('MARRIAGE_CLAUSE_CONFLICT', `${p}.contract.clauses`, '子の家門所属を指定する条項が複数あります（優先順位は自動決定しません）', o, houseClauses)
       }
+      // DEC-190 v4の選択記録: 参照の実在と当事者だけを検査する。記録と契約全体の結合は登録・出生時の共通照合
+      // （childHouseAgreementIssue）が保留/拒否として扱う。
+      const sel = m.contract.selection
+      if (sel !== undefined) {
+        const sp = `${p}.contract.selection`
+        if (sel.identity.dynastyId !== null) ref('DYNASTY', sel.identity.dynastyId, `${sp}.identity.dynastyId`, o)
+        ref('HOUSE', sel.identity.childHouse.houseId, `${sp}.identity.childHouse.houseId`, o)
+        if (sel.identity.childHouse.basis === 'MATERNAL_CONTRACT_CLAUSE') {
+          const src = sel.identity.childHouse.sourcePersonId
+          ref('PERSON', src, `${sp}.identity.childHouse.sourcePersonId`, o)
+          if (!m.personIds.includes(src)) {
+            add('MARRIAGE_CLAUSE_CONFLICT', `${sp}.identity.childHouse.sourcePersonId`, '家門選択の出典は婚姻当事者でなければなりません', o, [src])
+          }
+        }
+      }
     }
   })
   world.legal.cases.forEach((c, i) => {

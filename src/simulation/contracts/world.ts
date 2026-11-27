@@ -114,8 +114,24 @@ export type ChildLegalDynastyClause = Readonly<{
 }>
 
 /**
- * DEC-190: A-LEG-01 が登録時に B-005 の当年 Trace と照合して確定した、母方家門条項の双方合意の内容。
- * 出生時はこの記録から A が発行する契約を再構成し、保存済みの契約と一致する場合だけ条項を用いる
+ * DEC-190: v4契約案の子の家門。PATERNAL_DEFAULTは家門条項なし（父の家門）、MATERNALは母の家門を指定する明示条項。
+ */
+export type NextgenContractChildHouse =
+  | Readonly<{ basis: 'PATERNAL_DEFAULT'; houseId: Id }>
+  | Readonly<{ basis: 'MATERNAL_CONTRACT_CLAUSE'; houseId: Id; sourcePersonId: Id }>
+
+/**
+ * DEC-190: v4契約案の構造化された同一性。王朝条項（null は王朝条項なし）と子の家門の選択を別々に持つ。
+ * 契約案の比較はこの構造で行い、文字列キーの分割・連結で案を同一視しない。
+ */
+export type NextgenContractIdentity = Readonly<{ dynastyId: Id | null; childHouse: NextgenContractChildHouse }>
+
+/** v4契約の選択記録の版。旧v4（家門条項内の合意記録・連結キー）とは別版で、同一視しない。 */
+export const NEXTGEN_CONTRACT_SELECTION_VERSION = 'dec190-nextgen-contract-selection-1' as const
+
+/**
+ * DEC-190: A-LEG-01 が登録時に B-005 の当年 Trace と照合して確定した双方合意の内容。
+ * 出生時はこの記録から A が発行する契約を再構成し、保存済みの契約と一致する場合だけ用いる
  * （当年の交渉を現在の得点で再計算しない）。後付け・改変・他婚姻からの流用を検出するための記録で、暗号署名ではない。
  */
 export type ChildHouseAgreementRecord = Readonly<{
@@ -123,25 +139,31 @@ export type ChildHouseAgreementRecord = Readonly<{
   personIds: readonly [Id, Id] // ID 昇順
   /** A-LEG-01 が照合した B-005 ACCEPT の TraceID。 */
   sourceTraceId: Id
-  /** B-005 が選択し A が同一入力で再評価した契約案のキー。 */
-  contractKey: string
-  /** 同じ契約案の王朝条項。王朝条項の無い案では省略。 */
-  dynastyId?: Id
   firstConsentScore: number
   secondConsentScore: number
   consentThreshold: number
 }>
 
 /**
+ * DEC-190: v4構成でAが発行した契約の、条項から独立した版付き選択記録。父方案・母方案の双方に付く。
+ * 条項の削除・後付けがあっても選んだ案と合意の根拠が契約に残る。旧構成（v0〜v3）の契約は持たない。
+ */
+export type NextgenContractSelection = Readonly<{
+  version: typeof NEXTGEN_CONTRACT_SELECTION_VERSION
+  identity: NextgenContractIdentity
+  agreement: ChildHouseAgreementRecord
+}>
+
+/**
  * DEC-190: 出生児の家門所属を父方原則の例外として母方家門へ置く明示条項。法的王朝・出身人口集団とは独立。
  * MVPでは婚姻当事者である母（sourcePersonId）の実在する家門だけを指定できる。無条項は父方。
+ * 合意の根拠は契約の選択記録（NextgenContractSelection）にあり、記録の無い条項は解決しない。
  */
 export type ChildHouseAffiliationClause = Readonly<{
   clauseId: Id
   kind: 'CHILD_HOUSE_AFFILIATION'
   houseId: Id
   sourcePersonId: Id
-  agreement: ChildHouseAgreementRecord
 }>
 
 export type MarriageClause = ChildLegalDynastyClause | ChildHouseAffiliationClause
@@ -151,6 +173,8 @@ export type MarriageContract = Readonly<{
   contractId: Id
   evidenceId: Id
   clauses: readonly MarriageClause[]
+  /** DEC-190 v4構成の契約だけが持つ版付き選択記録。省略は旧構成の契約。 */
+  selection?: NextgenContractSelection
 }>
 
 export type Marriage = Readonly<{

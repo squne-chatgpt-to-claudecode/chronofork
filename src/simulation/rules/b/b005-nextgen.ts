@@ -5,7 +5,7 @@ import type { EvaluationContext, RuleEvaluator } from '../../engine/evaluators.t
 import { EvaluationFailure } from '../../engine/evaluators.ts'
 import { pairKey, normalizePersonPair } from '../../intervention/index.ts'
 import {
-  chooseNextgenContract, partnerHouseInterest, EXPERIMENTAL_NEXTGEN_CONTRACT, validateNextgenContractCalibration,
+  chooseNextgenContract, contractChoiceIdentity, partnerHouseInterest, EXPERIMENTAL_NEXTGEN_CONTRACT, validateNextgenContractCalibration,
 } from '../../legal/nextgen-contract.ts'
 import type { NextgenContractCalibration } from '../../legal/nextgen-contract.ts'
 import { reviewDomesticMarriageEligibility } from '../../legal/nextgen-marriage.ts'
@@ -17,8 +17,8 @@ import type { SupportingCandidateResolver } from '../../autonomy/supporting-cand
 import { B004_CALIBRATION_REASON } from './b004-candidate.ts'
 
 export const B005_NEXTGEN_VERSION='b005-bilateral-family-contract-3:CALIBRATION_ONLY'
-/** DEC-190の家門条項案を含む契約交渉。家門係数を持つ校正でのみ使う。 */
-export const B005_CHILD_HOUSE_VERSION='b005-bilateral-family-contract-4-dec190-child-house:CALIBRATION_ONLY'
+/** DEC-190の家門条項案を含む契約交渉。家門係数を持つ校正でのみ使う。版5: 契約案を構造化同一性の正規キーで記録し、選択案の同一性を別に保存。 */
+export const B005_CHILD_HOUSE_VERSION='b005-bilateral-family-contract-5-dec190-contract-identity:CALIBRATION_ONLY'
 type Query=Extract<CrossDomainRequest,{kind:'LEGAL_MARRIAGE_QUERY'}>
 type Candidate=Readonly<{trace:DecisionTrace;pair:readonly [Id,Id];score:number|null}>
 const cmp=(a:string,b:string)=>a<b?-1:a>b?1:0
@@ -135,7 +135,8 @@ export function createB005NextgenEvaluator(
             partnerHouseInterests:rankInterests,
             selectedContractKey:agreement?.status==='ACCEPT'?agreement.choice.key:null,
             ...(fixedCalibration.childHouse?{selectedChildHouse:agreement?.status==='ACCEPT'
-              ?agreement.choice.childHouse??null:null}:{}),
+              ?agreement.choice.childHouse??null:null,
+            selectedContractIdentity:agreement?.status==='ACCEPT'?contractChoiceIdentity(agreement.choice):null}:{}),
             supportingKinshipClearanceId:clearance?.status==='CLEARED'?clearance.clearanceId:null,
             ...(clearance?.status==='CLEARED'&&clearance.clearanceId!==null
               ?{supportingKinshipClearanceRecordKey:clearance.clearanceRecordKey}:{}),
